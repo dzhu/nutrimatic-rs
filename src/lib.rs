@@ -5,51 +5,79 @@ pub struct Link {
     pub loc: Option<usize>,
 }
 
-enum ByteSize {
-    B1,
-    B2,
-    B8,
-}
-
-fn extend(x: usize, max: usize) -> Option<usize> {
-    if x == max {
-        None
-    } else {
-        Some(x)
-    }
-}
-
-pub fn read_node(buf: &[u8], mut ind: usize, freq: usize) -> Vec<Link> {
+pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> Vec<Link> {
     use byteorder::{ByteOrder, LE};
-    ind -= 1;
-    let sig = buf[ind];
+    let ind = ind - 1;
+
+    #[derive(Clone, Copy)]
+    enum ByteSize {
+        B0,
+        B1,
+        B2,
+        B8,
+    }
 
     let get_ofs = |base: usize, ind: usize, sz: ByteSize| {
+        let check_max = |x: usize, max: usize| -> Option<usize> {
+            if x == max {
+                None
+            } else {
+                Some(x)
+            }
+        };
+
         (match sz {
-            ByteSize::B1 => extend(buf[ind] as usize, u8::MAX as usize),
-            ByteSize::B2 => extend(LE::read_u16(&buf[ind..]) as usize, u16::MAX as usize),
-            ByteSize::B8 => extend(LE::read_u64(&buf[ind..]) as usize, u64::MAX as usize),
+            ByteSize::B0 => None,
+            ByteSize::B1 => check_max(buf[ind] as usize, u8::MAX as usize),
+            ByteSize::B2 => check_max(LE::read_u16(&buf[ind..]) as usize, u16::MAX as usize),
+            ByteSize::B8 => check_max(LE::read_u64(&buf[ind..]) as usize, u64::MAX as usize),
         })
         .map(|ofs| base - ofs)
     };
 
-    let ret = match sig {
-        0x00..=0x1f => {
-            let num = if sig == 0x00 {
-                ind -= 1;
-                buf[ind]
-            } else {
-                sig
+    let read_num = |ind: usize, sz: ByteSize| match sz {
+        ByteSize::B0 => 0,
+        ByteSize::B1 => buf[ind] as usize,
+        ByteSize::B2 => LE::read_u16(&buf[ind..]) as usize,
+        ByteSize::B8 => LE::read_u64(&buf[ind..]) as usize,
+    };
+
+    let num_bytes = |b| match b {
+        ByteSize::B0 => 0,
+        ByteSize::B1 => 1,
+        ByteSize::B2 => 2,
+        ByteSize::B8 => 8,
+    };
+
+    let do_read =
+        |ind: usize, sig_base: u8, freq_size: ByteSize, ofs_size: ByteSize| -> Vec<Link> {
+            let (ind, num) = match buf[ind] - sig_base {
+                0 => (ind - 1, buf[ind - 1]),
+                d if d < 0x20 => (ind, d),
+                _ => unreachable!(),
             };
-            let base = ind - 2 * num as usize;
+
+            let freq_bytes = num_bytes(freq_size);
+            let ofs_bytes = num_bytes(ofs_size);
+            let elem_size = 1 + freq_bytes + ofs_bytes;
+
+            let base = ind - elem_size * num as usize;
             (0..num)
                 .map(|i| Link {
-                    ch: buf[base + 2 * i as usize],
-                    freq: buf[base + 2 * i as usize + 1] as usize,
-                    loc: None,
+                    ch: buf[base + elem_size * i as usize],
+                    freq: read_num(base + elem_size * i as usize + 1, freq_size),
+                    loc: get_ofs(
+                        base,
+                        base + elem_size * i as usize + 1 + freq_bytes,
+                        ofs_size,
+                    ),
                 })
                 .collect()
-        }
+        };
+
+    let sig = buf[ind];
+    match sig {
+        0x00..=0x1f => do_read(ind, 0x00, ByteSize::B1, ByteSize::B0),
         0x20..=0x7f => {
             vec![Link {
                 ch: sig,
@@ -57,70 +85,9 @@ pub fn read_node(buf: &[u8], mut ind: usize, freq: usize) -> Vec<Link> {
                 loc: Some(ind),
             }]
         }
-        0x80..=0x9f => {
-            let num = if sig == 0x80 {
-                ind -= 1;
-                buf[ind]
-            } else {
-                sig - 0x80
-            };
-            let base = ind - 3 * num as usize;
-            (0..num)
-                .map(|i| Link {
-                    ch: buf[base + 3 * i as usize],
-                    freq: buf[base + 3 * i as usize + 1] as usize,
-                    loc: get_ofs(base, base + 3 * i as usize + 2, ByteSize::B1),
-                })
-                .collect()
-        }
-        0xa0..=0xbf => {
-            let num = if sig == 0xa0 {
-                ind -= 1;
-                buf[ind]
-            } else {
-                sig - 0xa0
-            };
-            let base = ind - 4 * num as usize;
-            (0..num)
-                .map(|i| Link {
-                    ch: buf[base + 4 * i as usize],
-                    freq: buf[base + 4 * i as usize + 1] as usize,
-                    loc: get_ofs(base, base + 4 * i as usize + 2, ByteSize::B2),
-                })
-                .collect()
-        }
-        0xc0..=0xdf => {
-            let num = if sig == 0xc0 {
-                ind -= 1;
-                buf[ind]
-            } else {
-                sig - 0xc0
-            };
-            let base = ind - 5 * num as usize;
-            (0..num)
-                .map(|i| Link {
-                    ch: buf[base + 5 * i as usize],
-                    freq: LE::read_u16(&buf[base + 5 * i as usize + 1..]) as usize,
-                    loc: get_ofs(base, base + 5 * i as usize + 3, ByteSize::B2),
-                })
-                .collect()
-        }
-        0xe0..=0xff => {
-            let num = if sig == 0xe0 {
-                ind -= 1;
-                buf[ind]
-            } else {
-                sig - 0xe0
-            };
-            let base = ind - 17 * num as usize;
-            (0..num)
-                .map(|i| Link {
-                    ch: buf[base + 17 * i as usize],
-                    freq: LE::read_u64(&buf[base + 17 * i as usize + 1..]) as usize,
-                    loc: get_ofs(base, base + 17 * i as usize + 9, ByteSize::B8),
-                })
-                .collect()
-        }
-    };
-    ret
+        0x80..=0x9f => do_read(ind, 0x80, ByteSize::B1, ByteSize::B1),
+        0xa0..=0xbf => do_read(ind, 0xa0, ByteSize::B1, ByteSize::B2),
+        0xc0..=0xdf => do_read(ind, 0xc0, ByteSize::B2, ByteSize::B2),
+        0xe0..=0xff => do_read(ind, 0xe0, ByteSize::B8, ByteSize::B8),
+    }
 }
