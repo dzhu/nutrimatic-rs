@@ -91,3 +91,49 @@ pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> Vec<Link> {
         0xe0..=0xff => do_read(ind, 0xe0, ByteSize::B8, ByteSize::B8),
     }
 }
+
+#[derive(Debug)]
+pub enum SearchResult {
+    FailedOn(usize),
+    Found {
+        freq: usize,
+        loc: Option<usize>,
+        links: Vec<Link>,
+    },
+}
+
+pub fn search_string(buf: &[u8], q: &[u8]) -> SearchResult {
+    let mut loc = buf.len();
+    let mut freq = 0;
+    let mut links = read_node(buf, loc, freq);
+    for (i, &ch) in q.iter().enumerate() {
+        match links.iter().find(|link| link.ch == ch) {
+            None => {
+                return SearchResult::FailedOn(i);
+            }
+            Some(link) => match link.loc {
+                None => {
+                    return if i == q.len() - 1 {
+                        SearchResult::Found {
+                            freq: freq,
+                            loc: None,
+                            links: vec![],
+                        }
+                    } else {
+                        SearchResult::FailedOn(i + 1)
+                    };
+                }
+                Some(l) => {
+                    loc = l;
+                    freq = link.freq;
+                    links = read_node(buf, loc, freq);
+                }
+            },
+        }
+    }
+    SearchResult::Found {
+        freq: freq,
+        loc: Some(loc),
+        links: links,
+    }
+}
