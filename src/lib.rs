@@ -137,3 +137,13 @@ pub fn search_string(buf: &[u8], q: &[u8]) -> SearchResult {
         links: links,
     }
 }
+
+pub fn word_freq(buf: &[u8], word: &[u8]) -> Option<usize> {
+    match search_string(buf, word) {
+        SearchResult::FailedOn(_) => None,
+        SearchResult::Found { links, .. } => links
+            .into_iter()
+            .find(|l| l.ch == ' ' as u8)
+            .map(|l| l.freq),
+    }
+}
