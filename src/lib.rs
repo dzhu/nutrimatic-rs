@@ -1,21 +1,58 @@
-#[derive(Debug)]
+use byteorder::{ByteOrder, LE};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Link {
     pub ch: u8,
     pub freq: usize,
     pub loc: Option<usize>,
 }
 
-pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> Vec<Link> {
-    use byteorder::{ByteOrder, LE};
-    let ind = ind - 1;
+#[derive(Clone, Copy)]
+enum ByteSize {
+    B0,
+    B1,
+    B2,
+    B8,
+}
 
-    #[derive(Clone, Copy)]
-    enum ByteSize {
-        B0,
-        B1,
-        B2,
-        B8,
+fn num_bytes(b: ByteSize) -> usize {
+    match b {
+        ByteSize::B0 => 0,
+        ByteSize::B1 => 1,
+        ByteSize::B2 => 2,
+        ByteSize::B8 => 8,
     }
+}
+
+fn read_num(buf: &[u8], ind: usize, sz: ByteSize) -> usize {
+    match sz {
+        ByteSize::B0 => 0,
+        ByteSize::B1 => buf[ind] as usize,
+        ByteSize::B2 => LE::read_u16(&buf[ind..]) as usize,
+        ByteSize::B8 => LE::read_u64(&buf[ind..]) as usize,
+    }
+}
+
+fn get_ofs(buf: &[u8], base: usize, ind: usize, sz: ByteSize) -> Option<usize> {
+    let check_max = |x: usize, max: usize| -> Option<usize> {
+        if x == max {
+            None
+        } else {
+            Some(x)
+        }
+    };
+
+    (match sz {
+        ByteSize::B0 => None,
+        ByteSize::B1 => check_max(buf[ind] as usize, u8::MAX as usize),
+        ByteSize::B2 => check_max(LE::read_u16(&buf[ind..]) as usize, u16::MAX as usize),
+        ByteSize::B8 => check_max(LE::read_u64(&buf[ind..]) as usize, u64::MAX as usize),
+    })
+    .map(|ofs| base - ofs)
+}
+
+pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> Vec<Link> {
+    let ind = ind - 1;
 
     let get_ofs = |base: usize, ind: usize, sz: ByteSize| {
         let check_max = |x: usize, max: usize| -> Option<usize> {
@@ -89,6 +126,109 @@ pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> Vec<Link> {
         0xa0..=0xbf => do_read(ind, 0xa0, ByteSize::B1, ByteSize::B2),
         0xc0..=0xdf => do_read(ind, 0xc0, ByteSize::B2, ByteSize::B2),
         0xe0..=0xff => do_read(ind, 0xe0, ByteSize::B8, ByteSize::B8),
+    }
+}
+
+pub struct LinkReader<'buf> {
+    buf: &'buf [u8],
+
+    num: u8,
+
+    freq_size: ByteSize,
+    ofs_size: ByteSize,
+
+    base: usize,
+    freq_bytes: usize,
+    elem_bytes: usize,
+
+    single_link: Option<Link>,
+}
+
+impl<'a> LinkReader<'a> {
+    fn new(buf: &'a [u8], ind: usize, freq: usize) -> LinkReader<'a> {
+        let ind = ind - 1;
+        let sig = buf[ind];
+        let (sig_base, freq_size, ofs_size, single_link) = match sig {
+            0x00..=0x1f => (0x00, ByteSize::B1, ByteSize::B0, None),
+            0x20..=0x7f => (
+                0x00,
+                ByteSize::B0,
+                ByteSize::B0,
+                Some(Link {
+                    ch: sig,
+                    freq: freq,
+                    loc: Some(ind),
+                }),
+            ),
+            0x80..=0x9f => (0x80, ByteSize::B1, ByteSize::B1, None),
+            0xa0..=0xbf => (0xa0, ByteSize::B1, ByteSize::B2, None),
+            0xc0..=0xdf => (0xc0, ByteSize::B2, ByteSize::B2, None),
+            0xe0..=0xff => (0xe0, ByteSize::B8, ByteSize::B8, None),
+        };
+
+        let (ind, num) = match single_link {
+            Some(_) => (ind, 1),
+            None => match buf[ind] - sig_base {
+                0 => (ind - 1, buf[ind - 1]),
+                d if d < 0x20 => (ind, d),
+                _ => unreachable!(),
+            },
+        };
+
+        let ofs_bytes = num_bytes(ofs_size);
+        let freq_bytes = num_bytes(freq_size);
+        let elem_bytes = 1 + ofs_bytes + freq_bytes;
+        let base = ind - elem_bytes * num as usize;
+        LinkReader {
+            buf,
+
+            num,
+
+            freq_size,
+            ofs_size,
+
+            base,
+            freq_bytes,
+            elem_bytes,
+
+            single_link,
+        }
+    }
+
+    pub fn index(&self, index: usize) -> Link {
+        match self.single_link {
+            Some(l) => l,
+            None => Link {
+                ch: self.buf[self.base + self.elem_bytes as usize * index],
+                freq: read_num(
+                    self.buf,
+                    self.base + self.elem_bytes as usize * index + 1,
+                    self.freq_size,
+                ),
+                loc: get_ofs(
+                    self.buf,
+                    self.base,
+                    self.base + self.elem_bytes * index + 1 + self.freq_bytes,
+                    self.ofs_size,
+                ),
+            },
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.num as usize
+    }
+}
+
+pub fn read_node2(buf: &[u8], ind: usize, freq: usize) -> LinkReader {
+    LinkReader::new(buf, ind, freq)
+}
+
+pub fn find_link(buf: &[u8], ind: usize, freq: usize, ch: u8) -> Option<Link> {
+    let mut links = read_node(buf, ind, freq);
+    match links.binary_search_by_key(&ch, |link| link.ch) {
+        Ok(ind) => Some(links.swap_remove(ind)),
+        Err(_) => None,
     }
 }
 
