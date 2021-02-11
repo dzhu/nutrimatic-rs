@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use byteorder::{ByteOrder, LE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,14 +77,106 @@ fn read_node_88(buf: &[u8], base: usize, ind: usize, _freq: usize) -> Link {
     }
 }
 
-pub fn read_node3(
-    buf: &[u8],
+pub struct LinkIter<'a> {
+    links: &'a LinkReader<'a>,
     ind: usize,
-) -> (usize, usize, fn(&[u8], usize, usize, usize) -> Link) {
+}
+
+impl<'a> Iterator for LinkIter<'a> {
+    type Item = Link;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ind < self.links.len() {
+            self.ind += 1;
+            Some(self.links.index(self.ind - 1))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct LinkReader<'a> {
+    num: usize,
+    buf: &'a [u8],
+    base: usize,
+    freq: usize,
+    read_fn: fn(&[u8], usize, usize, usize) -> Link,
+}
+
+impl<'a> LinkReader<'a> {
+    pub fn index(&self, index: usize) -> Link {
+        (self.read_fn)(self.buf, self.base, index, self.freq)
+    }
+
+    pub fn len(&self) -> usize {
+        self.num
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn find(&self, ch: u8) -> Option<Link> {
+        let mut a = 0;
+        let mut b = self.len();
+        while b > a {
+            let c = (a + b) / 2;
+            let link = self.index(c);
+            match link.ch.cmp(&ch) {
+                Ordering::Less => {
+                    a = c + 1;
+                }
+                Ordering::Equal => {
+                    return Some(link);
+                }
+                Ordering::Greater => {
+                    b = c;
+                }
+            }
+        }
+        None
+    }
+
+    pub fn scan(&self, ch: u8) -> Option<Link> {
+        for i in 0..self.len() {
+            let link = self.index(i);
+            match link.ch.cmp(&ch) {
+                Ordering::Less => {}
+                Ordering::Equal => return Some(link),
+                Ordering::Greater => return None,
+            }
+        }
+        None
+    }
+
+    pub fn iter(&self) -> LinkIter<'_> {
+        self.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a LinkReader<'a> {
+    type Item = Link;
+    type IntoIter = LinkIter<'a>;
+    fn into_iter(self) -> LinkIter<'a> {
+        LinkIter {
+            links: self,
+            ind: 0,
+        }
+    }
+}
+
+pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> LinkReader<'_> {
     let ind = ind - 1;
     let sig = buf[ind];
     let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, usize) -> Link) = match sig {
-        0x20..=0x7f => return (1, ind, read_node_00),
+        0x20..=0x7f => {
+            return LinkReader {
+                num: 1,
+                buf,
+                base: ind,
+                freq,
+                read_fn: read_node_00,
+            }
+        }
         0x00..=0x1f => (0x00, 2, read_node_10),
         0x80..=0x9f => (0x80, 3, read_node_11),
         0xa0..=0xbf => (0xa0, 4, read_node_12),
@@ -96,15 +190,12 @@ pub fn read_node3(
         _ => unreachable!(),
     };
 
-    let base = ind - elem_bytes * num as usize;
-    (num.into(), base, func)
-}
-
-pub fn find_link(buf: &[u8], ind: usize, freq: usize, ch: u8) -> Option<Link> {
-    let mut links = read_node(buf, ind, freq);
-    match links.binary_search_by_key(&ch, |link| link.ch) {
-        Ok(ind) => Some(links.swap_remove(ind)),
-        Err(_) => None,
+    LinkReader {
+        num: num.into(),
+        buf: buf,
+        base: ind - elem_bytes * num as usize,
+        freq,
+        read_fn: func,
     }
 }
 
@@ -123,7 +214,7 @@ pub fn search_string(buf: &[u8], q: &[u8]) -> SearchResult {
     let mut freq = 0;
     let mut links = read_node(buf, loc, freq);
     for (i, &ch) in q.iter().enumerate() {
-        match links.iter().find(|link| link.ch == ch) {
+        match links.find(ch) {
             None => {
                 return SearchResult::FailedOn(i);
             }
@@ -150,7 +241,7 @@ pub fn search_string(buf: &[u8], q: &[u8]) -> SearchResult {
     SearchResult::Found {
         freq: freq,
         loc: Some(loc),
-        links: links,
+        links: links.iter().collect(),
     }
 }
 
