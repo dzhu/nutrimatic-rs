@@ -1,11 +1,29 @@
+//! An API for reading [Nutrimatic] index files.
+//!
+//! See the Nutrimatic source code for a [full description of the file
+//! format][format] or [instructions for creating an index file][instructions].
+//!
+//! An index file is represented as a `&[u8]` containing the contents of the
+//! file; typically, this will be provided by memory-mapping a file on disk.
+//!
+//! [Nutrimatic]: https://nutrimatic.org
+//! [format]: https://github.com/egnor/nutrimatic/blob/master/index.h
+//! [instructions]: https://github.com/egnor/nutrimatic/blob/master/README
+
 use std::cmp::Ordering;
 
 use byteorder::{ByteOrder, LE};
 
+/// A link from a node in the trie to one of its children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Link {
+    /// The character associated with the link.
     pub ch: u8,
+    /// The frequency of the child node.
     pub freq: usize,
+    /// The location in the file of the child node ([`None`](None) if the child
+    /// is a leaf and is therefore not actually physically represented in the
+    /// file).
     pub loc: Option<usize>,
 }
 
@@ -77,6 +95,7 @@ fn read_node_88(buf: &[u8], base: usize, ind: usize, _freq: usize) -> Link {
     }
 }
 
+/// An iterator over the children of a node in the trie.
 pub struct LinkIter<'a> {
     links: &'a LinkReader<'a>,
     ind: usize,
@@ -94,6 +113,7 @@ impl<'a> Iterator for LinkIter<'a> {
     }
 }
 
+/// A lazy reader of the children of a node in the trie.
 pub struct LinkReader<'a> {
     num: usize,
     buf: &'a [u8],
@@ -103,18 +123,24 @@ pub struct LinkReader<'a> {
 }
 
 impl<'a> LinkReader<'a> {
+    /// Returns the link at the given index, starting from 0. Links are in
+    /// increasing order by character. If the index is not within bounds, this
+    /// method will panic or return garbage.
     pub fn index(&self, index: usize) -> Link {
         (self.read_fn)(self.buf, self.base, index, self.freq)
     }
 
+    /// Returns the number of links (children) that the node has.
     pub fn len(&self) -> usize {
         self.num
     }
 
+    /// Returns `true` if the node has no children.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Finds a link with the given character using binary search.
     pub fn find(&self, ch: u8) -> Option<Link> {
         let mut a = 0;
         let mut b = self.len();
@@ -136,6 +162,9 @@ impl<'a> LinkReader<'a> {
         None
     }
 
+    /// Finds a link with the given character by scanning through the links in
+    /// order. This is useful when the character is known to be early in the
+    /// list (in particular, the space character is always first if present).
     pub fn scan(&self, ch: u8) -> Option<Link> {
         for i in 0..self.len() {
             let link = self.index(i);
@@ -148,6 +177,7 @@ impl<'a> LinkReader<'a> {
         None
     }
 
+    /// Returns an iterator over the links.
     pub fn iter(&self) -> LinkIter<'_> {
         self.into_iter()
     }
@@ -164,6 +194,7 @@ impl<'a> IntoIterator for &'a LinkReader<'a> {
     }
 }
 
+/// Parses the header of a node.
 pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> LinkReader<'_> {
     let ind = ind - 1;
     let sig = buf[ind];
