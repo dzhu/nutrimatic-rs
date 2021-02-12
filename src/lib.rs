@@ -14,6 +14,13 @@ use std::cmp::Ordering;
 
 use byteorder::{ByteOrder, LE};
 
+/// An opaque object that can be used to query the child of a link in the trie.
+#[derive(Clone, Copy, Debug)]
+pub struct Cursor {
+    freq: usize,
+    loc: usize,
+}
+
 /// A link from a node in the trie to one of its children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Link {
@@ -21,10 +28,20 @@ pub struct Link {
     pub ch: u8,
     /// The frequency of the child node.
     pub freq: usize,
-    /// The location in the file of the child node ([`None`](None) if the child
-    /// is a leaf and is therefore not actually physically represented in the
-    /// file).
-    pub loc: Option<usize>,
+    loc: Option<usize>,
+}
+
+impl Link {
+    /// Constructs a cursor that can be used to query for the child node at the
+    /// end of this link using [`read_node`](read_node) (returns [`None`](None)
+    /// if the child is a leaf and is therefore not actually physically
+    /// represented in the file).
+    pub fn cursor(&self) -> Option<Cursor> {
+        self.loc.map(|l| Cursor {
+            freq: self.freq,
+            loc: l,
+        })
+    }
 }
 
 fn read_node_00(buf: &[u8], base: usize, _ind: usize, freq: usize) -> Link {
@@ -195,8 +212,8 @@ impl<'a> IntoIterator for &'a LinkReader<'a> {
 }
 
 /// Parses the header of a node.
-pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> LinkReader<'_> {
-    let ind = ind - 1;
+pub fn read_node(buf: &[u8], cursor: Cursor) -> LinkReader<'_> {
+    let ind = cursor.loc - 1;
     let sig = buf[ind];
     let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, usize) -> Link) = match sig {
         0x20..=0x7f => {
@@ -204,7 +221,7 @@ pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> LinkReader<'_> {
                 num: 1,
                 buf,
                 base: ind,
-                freq,
+                freq: cursor.freq,
                 read_fn: read_node_00,
             }
         }
@@ -225,8 +242,17 @@ pub fn read_node(buf: &[u8], ind: usize, freq: usize) -> LinkReader<'_> {
         num: num.into(),
         buf: buf,
         base: ind - elem_bytes * num as usize,
-        freq,
+        freq: 0,
         read_fn: func,
+    }
+}
+
+/// Returns a [`Cursor`](Cursor) corresponding to the root node of the trie
+/// contained in the given buffer.
+pub fn root(buf: &[u8]) -> Cursor {
+    Cursor {
+        freq: 0,
+        loc: buf.len(),
     }
 }
 
@@ -235,43 +261,41 @@ pub enum SearchResult {
     FailedOn(usize),
     Found {
         freq: usize,
-        loc: Option<usize>,
+        cursor: Option<Cursor>,
         links: Vec<Link>,
     },
 }
 
 pub fn search_string(buf: &[u8], q: &[u8]) -> SearchResult {
-    let mut loc = buf.len();
-    let mut freq = 0;
-    let mut links = read_node(buf, loc, freq);
+    let mut cursor = root(buf);
+    let mut links = read_node(buf, cursor);
     for (i, &ch) in q.iter().enumerate() {
         match links.find(ch) {
             None => {
                 return SearchResult::FailedOn(i);
             }
-            Some(link) => match link.loc {
+            Some(link) => match link.cursor() {
                 None => {
                     return if i == q.len() - 1 {
                         SearchResult::Found {
-                            freq: freq,
-                            loc: None,
+                            freq: link.freq,
+                            cursor: None,
                             links: vec![],
                         }
                     } else {
                         SearchResult::FailedOn(i + 1)
                     };
                 }
-                Some(l) => {
-                    loc = l;
-                    freq = link.freq;
-                    links = read_node(buf, loc, freq);
+                Some(c) => {
+                    cursor = c;
+                    links = read_node(buf, cursor);
                 }
             },
         }
     }
     SearchResult::Found {
-        freq: freq,
-        loc: Some(loc),
+        freq: cursor.freq,
+        cursor: Some(cursor),
         links: links.iter().collect(),
     }
 }
