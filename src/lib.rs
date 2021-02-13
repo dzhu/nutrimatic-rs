@@ -12,7 +12,7 @@
 
 use std::cmp::Ordering;
 
-use byteorder::{ByteOrder, LE};
+mod node_types;
 
 /// An opaque object that can be used to query the child of a link in the trie.
 #[derive(Clone, Copy, Debug)]
@@ -41,74 +41,6 @@ impl Link {
             freq: self.freq,
             loc: l,
         })
-    }
-}
-
-fn read_node_00(buf: &[u8], base: usize, _ind: usize, freq: usize) -> Link {
-    Link {
-        ch: buf[base],
-        freq: freq,
-        loc: Some(base),
-    }
-}
-
-fn read_node_10(buf: &[u8], base: usize, ind: usize, _freq: usize) -> Link {
-    Link {
-        ch: buf[base + 2 * ind],
-        freq: buf[base + 2 * ind + 1] as usize,
-        loc: None,
-    }
-}
-
-fn read_node_11(buf: &[u8], base: usize, ind: usize, _freq: usize) -> Link {
-    let ofs = buf[base + 3 * ind + 2];
-    Link {
-        ch: buf[base + 3 * ind],
-        freq: buf[base + 3 * ind + 1] as usize,
-        loc: if ofs == u8::MAX {
-            None
-        } else {
-            Some(base - ofs as usize)
-        },
-    }
-}
-
-fn read_node_12(buf: &[u8], base: usize, ind: usize, _freq: usize) -> Link {
-    let ofs = LE::read_u16(&buf[base + 4 * ind + 2..]);
-    Link {
-        ch: buf[base + 4 * ind],
-        freq: buf[base + 4 * ind + 1] as usize,
-        loc: if ofs == u16::MAX {
-            None
-        } else {
-            Some(base - ofs as usize)
-        },
-    }
-}
-
-fn read_node_22(buf: &[u8], base: usize, ind: usize, _freq: usize) -> Link {
-    let ofs = LE::read_u16(&buf[base + 5 * ind + 3..]);
-    Link {
-        ch: buf[base + 5 * ind],
-        freq: LE::read_u16(&buf[base + 5 * ind + 1..]) as usize,
-        loc: if ofs == u16::MAX {
-            None
-        } else {
-            Some(base - ofs as usize)
-        },
-    }
-}
-
-fn read_node_88(buf: &[u8], base: usize, ind: usize, _freq: usize) -> Link {
-    let ofs = LE::read_u64(&buf[base + 17 * ind + 9..]);
-    Link {
-        ch: buf[base + 17 * ind],
-        freq: LE::read_u64(&buf[base + 17 * ind + 1..]) as usize,
-        loc: if ofs == u64::MAX {
-            None
-        } else {
-            Some(base - ofs as usize)
-        },
     }
 }
 
@@ -222,14 +154,14 @@ pub fn read_node(buf: &[u8], cursor: Cursor) -> LinkReader<'_> {
                 buf,
                 base: ind,
                 freq: cursor.freq,
-                read_fn: read_node_00,
+                read_fn: node_types::read_00,
             }
         }
-        0x00..=0x1f => (0x00, 2, read_node_10),
-        0x80..=0x9f => (0x80, 3, read_node_11),
-        0xa0..=0xbf => (0xa0, 4, read_node_12),
-        0xc0..=0xdf => (0xc0, 5, read_node_22),
-        0xe0..=0xff => (0xe0, 17, read_node_88),
+        0x00..=0x1f => (0x00, 2, node_types::read_10),
+        0x80..=0x9f => (0x80, 3, node_types::read_11),
+        0xa0..=0xbf => (0xa0, 4, node_types::read_12),
+        0xc0..=0xdf => (0xc0, 5, node_types::read_22),
+        0xe0..=0xff => (0xe0, 17, node_types::read_88),
     };
 
     let (ind, num) = match buf[ind] - sig_base {
