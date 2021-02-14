@@ -14,44 +14,53 @@ use std::cmp::Ordering;
 
 mod node_types;
 
-/// An opaque object that can be used to query the child of a link in the trie.
+/// An opaque object that can be passed to [`read_node`] to query the child node
+/// at the end of a link in the trie.
+///
+/// [`read_node`]: Trie::read_node
 #[derive(Clone, Copy, Debug)]
-pub struct Cursor {
+pub struct Cursor<'buf> {
     freq: usize,
     loc: usize,
+    _phantom: std::marker::PhantomData<&'buf [u8]>,
 }
 
 /// A link from a node in the trie to one of its children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Link {
+pub struct Link<'buf> {
     /// The character associated with the link.
     pub ch: u8,
     /// The frequency of the child node.
     pub freq: usize,
     loc: Option<usize>,
+
+    _phantom: std::marker::PhantomData<&'buf [u8]>,
 }
 
-impl Link {
+impl<'buf> Link<'buf> {
     /// Constructs a cursor that can be used to query for the child node at the
-    /// end of this link using [`read_node`](read_node) (returns [`None`](None)
-    /// if the child is a leaf and is therefore not actually physically
-    /// represented in the file).
-    pub fn cursor(&self) -> Option<Cursor> {
+    /// end of this link using [`read_node`] (returns [`None`](None) if the
+    /// child is a leaf and is therefore not actually physically represented in
+    /// the file).
+    ///
+    /// [`read_node`]: Trie::read_node
+    pub fn cursor(&self) -> Option<Cursor<'buf>> {
         self.loc.map(|l| Cursor {
             freq: self.freq,
             loc: l,
+            _phantom: std::marker::PhantomData,
         })
     }
 }
 
 /// An iterator over the children of a node in the trie.
-pub struct LinkIter<'a> {
-    links: &'a LinkReader<'a>,
+pub struct LinkIter<'buf, 'reader> {
+    links: &'reader LinkReader<'buf>,
     ind: usize,
 }
 
-impl<'a> Iterator for LinkIter<'a> {
-    type Item = Link;
+impl<'buf, 'reader> Iterator for LinkIter<'buf, 'reader> {
+    type Item = Link<'buf>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.ind < self.links.len() {
             self.ind += 1;
@@ -63,19 +72,19 @@ impl<'a> Iterator for LinkIter<'a> {
 }
 
 /// A lazy reader of the children of a node in the trie.
-pub struct LinkReader<'a> {
+pub struct LinkReader<'buf> {
     num: usize,
-    buf: &'a [u8],
+    buf: &'buf [u8],
     base: usize,
     freq: usize,
     read_fn: fn(&[u8], usize, usize, usize) -> Link,
 }
 
-impl<'a> LinkReader<'a> {
+impl<'buf> LinkReader<'buf> {
     /// Returns the link at the given index, starting from 0. Links are in
     /// increasing order by character. If the index is not within bounds, this
     /// method will panic or return garbage.
-    pub fn index(&self, index: usize) -> Link {
+    pub fn index(&self, index: usize) -> Link<'buf> {
         (self.read_fn)(self.buf, self.base, index, self.freq)
     }
 
@@ -90,7 +99,7 @@ impl<'a> LinkReader<'a> {
     }
 
     /// Finds a link with the given character using binary search.
-    pub fn find(&self, ch: u8) -> Option<Link> {
+    pub fn find(&self, ch: u8) -> Option<Link<'buf>> {
         let mut a = 0;
         let mut b = self.len();
         while b > a {
@@ -127,15 +136,15 @@ impl<'a> LinkReader<'a> {
     }
 
     /// Returns an iterator over the links.
-    pub fn iter(&self) -> LinkIter<'_> {
+    pub fn iter<'reader>(&'reader self) -> LinkIter<'buf, 'reader> {
         self.into_iter()
     }
 }
 
-impl<'a> IntoIterator for &'a LinkReader<'a> {
-    type Item = Link;
-    type IntoIter = LinkIter<'a>;
-    fn into_iter(self) -> LinkIter<'a> {
+impl<'buf, 'reader> IntoIterator for &'reader LinkReader<'buf> {
+    type Item = Link<'buf>;
+    type IntoIter = LinkIter<'buf, 'reader>;
+    fn into_iter(self) -> LinkIter<'buf, 'reader> {
         LinkIter {
             links: self,
             ind: 0,
@@ -143,27 +152,38 @@ impl<'a> IntoIterator for &'a LinkReader<'a> {
     }
 }
 
-pub struct Trie<'a> {
-    buf: &'a [u8],
+/// A full Nutrimatic trie as represented in an index file.
+/// ```
+/// let buf: &[u8] = todo!();
+/// let trie = Trie::new(buf);
+/// // Print out all links from the root node of the trie.
+/// for link in trie.read_node(trie.root()) {
+///     println!("{:?}", link);
+/// }
+/// ```
+#[derive(Debug)]
+pub struct Trie<'buf> {
+    buf: &'buf [u8],
 }
 
 #[derive(Debug)]
-pub enum SearchResult {
+pub enum SearchResult<'buf> {
     FailedOn(usize),
     Found {
         freq: usize,
-        cursor: Option<Cursor>,
-        links: Vec<Link>,
+        cursor: Option<Cursor<'buf>>,
+        links: Vec<Link<'buf>>,
     },
 }
 
-impl Trie<'_> {
+impl<'buf> Trie<'buf> {
+    /// Constructs a new trie wrapping the given buffer.
     pub fn new(buf: &[u8]) -> Trie {
         Trie { buf }
     }
 
     /// Parses the header of a node.
-    pub fn read_node(self: &Self, cursor: Cursor) -> LinkReader<'_> {
+    pub fn read_node(self: &Self, cursor: Cursor<'buf>) -> LinkReader<'buf> {
         let ind = cursor.loc - 1;
         let sig = self.buf[ind];
         let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, usize) -> Link) = match sig
@@ -201,16 +221,18 @@ impl Trie<'_> {
     }
 
     /// Returns a cursor corresponding to the root node of the trie.
-    pub fn root(self: &Self) -> Cursor {
+    pub fn root(self: &Self) -> Cursor<'buf> {
         Cursor {
             freq: 0,
             loc: self.buf.len(),
+            _phantom: std::marker::PhantomData,
         }
     }
 
-    pub fn search_string(self: &Self, q: &[u8]) -> SearchResult {
+    pub fn search_string(self: &Self, q: &[u8]) -> SearchResult<'buf> {
         let mut cursor = self.root();
         let mut links = self.read_node(cursor);
+
         for (i, &ch) in q.iter().enumerate() {
             match links.find(ch) {
                 None => {

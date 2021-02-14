@@ -5,6 +5,7 @@ pub(crate) fn read_00(buf: &[u8], base: usize, _ind: usize, freq: usize) -> crat
         ch: buf[base],
         freq,
         loc: Some(base),
+        _phantom: std::marker::PhantomData,
     }
 }
 
@@ -13,6 +14,7 @@ pub(crate) fn read_10(buf: &[u8], base: usize, ind: usize, _freq: usize) -> crat
         ch: buf[base + 2 * ind],
         freq: buf[base + 2 * ind + 1] as usize,
         loc: None,
+        _phantom: std::marker::PhantomData,
     }
 }
 
@@ -26,6 +28,7 @@ pub(crate) fn read_11(buf: &[u8], base: usize, ind: usize, _freq: usize) -> crat
         } else {
             Some(base - ofs as usize)
         },
+        _phantom: std::marker::PhantomData,
     }
 }
 
@@ -39,6 +42,7 @@ pub(crate) fn read_12(buf: &[u8], base: usize, ind: usize, _freq: usize) -> crat
         } else {
             Some(base - ofs as usize)
         },
+        _phantom: std::marker::PhantomData,
     }
 }
 
@@ -52,6 +56,7 @@ pub(crate) fn read_22(buf: &[u8], base: usize, ind: usize, _freq: usize) -> crat
         } else {
             Some(base - ofs as usize)
         },
+        _phantom: std::marker::PhantomData,
     }
 }
 
@@ -65,5 +70,6 @@ pub(crate) fn read_88(buf: &[u8], base: usize, ind: usize, _freq: usize) -> crat
         } else {
             Some(base - ofs as usize)
         },
+        _phantom: std::marker::PhantomData,
     }
 }
