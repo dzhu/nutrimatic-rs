@@ -143,49 +143,8 @@ impl<'a> IntoIterator for &'a LinkReader<'a> {
     }
 }
 
-/// Parses the header of a node.
-pub fn read_node(buf: &[u8], cursor: Cursor) -> LinkReader<'_> {
-    let ind = cursor.loc - 1;
-    let sig = buf[ind];
-    let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, usize) -> Link) = match sig {
-        0x20..=0x7f => {
-            return LinkReader {
-                num: 1,
-                buf,
-                base: ind,
-                freq: cursor.freq,
-                read_fn: node_types::read_00,
-            }
-        }
-        0x00..=0x1f => (0x00, 2, node_types::read_10),
-        0x80..=0x9f => (0x80, 3, node_types::read_11),
-        0xa0..=0xbf => (0xa0, 4, node_types::read_12),
-        0xc0..=0xdf => (0xc0, 5, node_types::read_22),
-        0xe0..=0xff => (0xe0, 17, node_types::read_88),
-    };
-
-    let (ind, num) = match buf[ind] - sig_base {
-        0 => (ind - 1, buf[ind - 1]),
-        d if d < 0x20 => (ind, d),
-        _ => unreachable!(),
-    };
-
-    LinkReader {
-        num: num.into(),
-        buf: buf,
-        base: ind - elem_bytes * num as usize,
-        freq: 0,
-        read_fn: func,
-    }
-}
-
-/// Returns a [`Cursor`](Cursor) corresponding to the root node of the trie
-/// contained in the given buffer.
-pub fn root(buf: &[u8]) -> Cursor {
-    Cursor {
-        freq: 0,
-        loc: buf.len(),
-    }
+pub struct Trie<'a> {
+    buf: &'a [u8],
 }
 
 #[derive(Debug)]
@@ -198,46 +157,98 @@ pub enum SearchResult {
     },
 }
 
-pub fn search_string(buf: &[u8], q: &[u8]) -> SearchResult {
-    let mut cursor = root(buf);
-    let mut links = read_node(buf, cursor);
-    for (i, &ch) in q.iter().enumerate() {
-        match links.find(ch) {
-            None => {
-                return SearchResult::FailedOn(i);
+impl Trie<'_> {
+    pub fn new(buf: &[u8]) -> Trie {
+        Trie { buf }
+    }
+
+    /// Parses the header of a node.
+    pub fn read_node(self: &Self, cursor: Cursor) -> LinkReader<'_> {
+        let ind = cursor.loc - 1;
+        let sig = self.buf[ind];
+        let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, usize) -> Link) = match sig
+        {
+            0x20..=0x7f => {
+                return LinkReader {
+                    num: 1,
+                    buf: self.buf,
+                    base: ind,
+                    freq: cursor.freq,
+                    read_fn: node_types::read_00,
+                }
             }
-            Some(link) => match link.cursor() {
-                None => {
-                    return if i == q.len() - 1 {
-                        SearchResult::Found {
-                            freq: link.freq,
-                            cursor: None,
-                            links: vec![],
-                        }
-                    } else {
-                        SearchResult::FailedOn(i + 1)
-                    };
-                }
-                Some(c) => {
-                    cursor = c;
-                    links = read_node(buf, cursor);
-                }
-            },
+            0x00..=0x1f => (0x00, 2, node_types::read_10),
+            0x80..=0x9f => (0x80, 3, node_types::read_11),
+            0xa0..=0xbf => (0xa0, 4, node_types::read_12),
+            0xc0..=0xdf => (0xc0, 5, node_types::read_22),
+            0xe0..=0xff => (0xe0, 17, node_types::read_88),
+        };
+
+        let (ind, num) = match self.buf[ind] - sig_base {
+            0 => (ind - 1, self.buf[ind - 1]),
+            d if d < 0x20 => (ind, d),
+            _ => unreachable!(),
+        };
+
+        LinkReader {
+            num: num.into(),
+            buf: self.buf,
+            base: ind - elem_bytes * num as usize,
+            // Not actually used in this case.
+            freq: 0,
+            read_fn: func,
         }
     }
-    SearchResult::Found {
-        freq: cursor.freq,
-        cursor: Some(cursor),
-        links: links.iter().collect(),
-    }
-}
 
-pub fn word_freq(buf: &[u8], word: &[u8]) -> Option<usize> {
-    match search_string(buf, word) {
-        SearchResult::FailedOn(_) => None,
-        SearchResult::Found { links, .. } => links
-            .into_iter()
-            .find(|l| l.ch == ' ' as u8)
-            .map(|l| l.freq),
+    /// Returns a cursor corresponding to the root node of the trie.
+    pub fn root(self: &Self) -> Cursor {
+        Cursor {
+            freq: 0,
+            loc: self.buf.len(),
+        }
+    }
+
+    pub fn search_string(self: &Self, q: &[u8]) -> SearchResult {
+        let mut cursor = self.root();
+        let mut links = self.read_node(cursor);
+        for (i, &ch) in q.iter().enumerate() {
+            match links.find(ch) {
+                None => {
+                    return SearchResult::FailedOn(i);
+                }
+                Some(link) => match link.cursor() {
+                    None => {
+                        return if i == q.len() - 1 {
+                            SearchResult::Found {
+                                freq: link.freq,
+                                cursor: None,
+                                links: vec![],
+                            }
+                        } else {
+                            SearchResult::FailedOn(i + 1)
+                        };
+                    }
+                    Some(c) => {
+                        cursor = c;
+                        links = self.read_node(cursor);
+                    }
+                },
+            }
+        }
+        SearchResult::Found {
+            freq: cursor.freq,
+            cursor: Some(cursor),
+            links: links.iter().collect(),
+        }
+    }
+
+    pub fn word_freq(self: &Self, word: &[u8]) -> Option<usize> {
+        match self.search_string(word) {
+            SearchResult::FailedOn(_) => None,
+            SearchResult::Found { links, .. } => links
+                .into_iter()
+                .find(|l| l.ch == ' ' as u8)
+                .map(|l| l.freq),
+        }
     }
 }
