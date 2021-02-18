@@ -3,23 +3,63 @@
 //! See the Nutrimatic source code for a [full description of the file
 //! format][format] or [instructions for creating an index file][instructions].
 //!
-//! An index file is represented as a `&[u8]` containing the contents of the
-//! file; typically, this will be provided by memory-mapping a file on disk.
+//! An index file is taken in as a `&[u8]` containing the contents of the file;
+//! typically, this will be created by memory-mapping a file on disk (of course,
+//! it also works fine to read an index file fully into memory if it fits).
+//!
+//! An index file describes a trie of strings; edges are labeled with characters
+//! (ASCII space, digits, and letters) and each node stores the total frequency
+//! in some corpus of all phrases starting with the sequence of characters
+//! leading up to the node.
+//!
+//! This library does no consistency checking of index files. If you attempt to
+//! use an invalid file, you will see random panics or garbage results (but no
+//! unsafety). Don't do that!
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use nutrimatic::Node;
+//!
+//! // Print out all nodes in the trie and their frequencies.
+//! fn dump(word: &mut String, node: &Node, depth: usize) {
+//!     for link in &node.links() {
+//!         word.push(link.ch as char);
+//!         println!("{}'{}' {:8}", "    ".repeat(depth), word, link.freq);
+//!         if let Some(c) = link.child() {
+//!             dump(word, &c, depth + 1);
+//!         }
+//!         word.pop();
+//!     }
+//! }
+//!
+//! fn main() {
+//!     // Get a buffer containing an index file somehow.
+//!     let buf: &[u8] = todo!();
+//!     let trie = Node::new(buf);
+//!     dump(&mut String::new(), &trie, 0);
+//! }
+//! ```
 //!
 //! [Nutrimatic]: https://nutrimatic.org
 //! [format]: https://github.com/egnor/nutrimatic/blob/master/index.h
 //! [instructions]: https://github.com/egnor/nutrimatic/blob/master/README
 
+#![warn(missing_docs)]
+
 use std::cmp::Ordering;
 
 mod node_types;
 
-/// A link from a node in the trie to one of its children.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A link leading out of a node in the trie.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Link<'buf> {
     /// The character associated with the link.
     pub ch: u8,
-    /// The frequency of the child node.
+    /// The frequency of the link—i.e., the total number of times that the
+    /// corpus contains any phrase that starts with the sequence of characters
+    /// corresponding to the path to this link (including this link's own
+    /// character).
     pub freq: usize,
 
     buf: &'buf [u8],
@@ -27,6 +67,10 @@ pub struct Link<'buf> {
 }
 
 impl<'buf> Link<'buf> {
+    /// Returns the child node pointed to by this link, if there is one. Leaf
+    /// nodes have a link notionally leading to them but are not physically
+    /// represented in the index file; they correspond to a return value of
+    /// `None`.
     pub fn child(&self) -> Option<Node<'buf>> {
         self.loc.map(|l| Node {
             buf: self.buf,
@@ -36,7 +80,10 @@ impl<'buf> Link<'buf> {
     }
 }
 
-/// An iterator over the children of a node in the trie.
+/// An iterator over the links leading out of a node in the trie.
+///
+/// This `struct` is created by iterating over [`LinkReader`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LinkIter<'buf, 'reader> {
     links: &'reader LinkReader<'buf>,
     ind: usize,
@@ -54,7 +101,26 @@ impl<'buf, 'reader> Iterator for LinkIter<'buf, 'reader> {
     }
 }
 
-/// A lazy reader of the children of a node in the trie.
+/// A lazy reader of the links leading out of a node in the trie.
+///
+/// This `struct` is created by the [`links`] method on [`Node`]. It
+/// conceptually represents a sequence of [`Link`]s indexed by contiguous
+/// numbers, kind of like `[Link]`; however, it does not physically contain any
+/// instances, instead constructing them on demand.
+///
+/// # Examples
+///
+/// ```no_run
+/// use nutrimatic::{Link, Node};
+///
+/// // Materialize all the links leading out of a node.
+/// fn collect_links<'a>(node: &Node<'a>) -> Vec<Link<'a>> {
+///     node.links().iter().collect()
+/// }
+/// ```
+///
+/// [`links`]: Node::links
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LinkReader<'buf> {
     num: usize,
     buf: &'buf [u8],
@@ -71,7 +137,7 @@ impl<'buf> LinkReader<'buf> {
         (self.read_fn)(self.buf, self.base, index, self.freq)
     }
 
-    /// Returns the number of links (children) that the node has.
+    /// Returns the number of links in this sequence.
     pub fn len(&self) -> usize {
         self.num
     }
@@ -135,37 +201,54 @@ impl<'buf, 'reader> IntoIterator for &'reader LinkReader<'buf> {
     }
 }
 
-/// A full Nutrimatic trie as represented in an index file.
-/// ```no_run
-/// use nutrimatic::Trie;
+/// A node in the trie that is physically present in an index file.
 ///
-/// // Get a buffer somehow, perhaps by reading or memory-mapping a file.
-/// let buf: &[u8] = todo!();
+/// The unit of serialization in an index file, and what we mean by "node", is a
+/// sequence of links to children. Therefore, leaf nodes in the conceptual trie
+/// are not physically present in the file and have no representation as
+/// `Node`s.
 ///
-/// let trie = Trie::new(buf);
+/// ```
+/// use nutrimatic::Node;
+///
+/// // This buffer represents a single node with three links to leaf children.
+/// let buf: &[u8] = &[0x61, 0x11, 0x62, 0x12, 0x63, 0x13, 0x03];
+///
+/// let trie = Node::new(buf);
 /// // Print out all links from the root node of the trie.
-/// for link in &trie.read_node(trie.root()) {
+/// for link in &trie.links() {
 ///     println!("{} {}", link.ch as char, link.freq);
 /// }
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Node<'buf> {
     buf: &'buf [u8],
     loc: usize,
     freq: usize,
 }
 
+/// The result of searching for a string.
+///
+/// This `struct` is created by the [`search_string`] method on [`Node`]. See
+/// its documentation for more.
+///
+/// [`search_string`]: Node::search_string
 pub enum SearchResult<'buf> {
+    /// Result indicating that no link was found after a certain number of
+    /// characters.
     FailedOn(usize),
+    /// Result indicating that the string was found with the given frequency and
+    /// following links.
     Found {
+        /// The frequency.
         freq: usize,
+        /// The following links.
         links: Option<LinkReader<'buf>>,
     },
 }
 
 impl<'buf> Node<'buf> {
-    /// Constructs a new `Trie` representing the trie serialized in the given
-    /// buffer.
+    /// Constructs the root node of the trie serialized in the given buffer.
     pub fn new(buf: &'buf [u8]) -> Node<'buf> {
         Node {
             buf,
@@ -174,7 +257,8 @@ impl<'buf> Node<'buf> {
         }
     }
 
-    /// Parses the header of a node.
+    /// Parses a node and returns an object representing the sequence of links
+    /// leading out from it.
     pub fn links(self: &Self) -> LinkReader<'buf> {
         let ind = self.loc - 1;
         let sig = self.buf[ind];
@@ -246,6 +330,10 @@ impl<'buf> Node<'buf> {
         }
     }
 
+    /// Finds the frequency of the given sequence of characters in the trie.
+    ///
+    /// This function performs a query for the given characters followed by a
+    /// space character and returns the frequency of the final link, if found.
     pub fn word_freq(self: &Self, word: &[u8]) -> Option<usize> {
         match self.search_string(word) {
             SearchResult::FailedOn(_) => None,
