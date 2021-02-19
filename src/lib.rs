@@ -24,8 +24,8 @@
 //! // Print out all nodes in the trie and their frequencies.
 //! fn dump(word: &mut String, node: &Node, depth: usize) {
 //!     for link in &node.links() {
-//!         word.push(link.ch as char);
-//!         println!("{}'{}' {:8}", "    ".repeat(depth), word, link.freq);
+//!         word.push(link.ch() as char);
+//!         println!("{}'{}' {:8}", "    ".repeat(depth), word, link.freq());
 //!         if let Some(c) = link.child() {
 //!             dump(word, &c, depth + 1);
 //!         }
@@ -54,13 +54,8 @@ mod node_types;
 /// A link leading out of a node in the trie.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Link<'buf> {
-    /// The character associated with the link.
-    pub ch: u8,
-    /// The frequency of the link—i.e., the total number of times that the
-    /// corpus contains any phrase that starts with the sequence of characters
-    /// corresponding to the path to this link (including this link's own
-    /// character).
-    pub freq: usize,
+    ch: u8,
+    freq: usize,
 
     buf: &'buf [u8],
     loc: Option<usize>,
@@ -77,6 +72,19 @@ impl<'buf> Link<'buf> {
             loc: l,
             freq: self.freq,
         })
+    }
+
+    /// Returns the character associated with the link.
+    pub fn ch(&self) -> u8 {
+        self.ch
+    }
+
+    /// Returns the frequency of the link—i.e., the total number of times that
+    /// the corpus contains any phrase that starts with the sequence of
+    /// characters corresponding to the path to this link (including this link's
+    /// own character).
+    pub fn freq(&self) -> usize {
+        self.freq
     }
 }
 
@@ -217,7 +225,7 @@ impl<'buf, 'reader> IntoIterator for &'reader LinkReader<'buf> {
 /// let trie = Node::new(buf);
 /// // Print out all links from the root node of the trie.
 /// for link in &trie.links() {
-///     println!("{} {}", link.ch as char, link.freq);
+///     println!("{} {}", link.ch() as char, link.freq());
 /// }
 /// ```
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
