@@ -3,8 +3,13 @@ name = "nutrimatic"
 version = "0.1.0"
 authors = ["dzhu"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Tools for reading Nutrimatic (https://nutrimatic.org) index files"
+readme = "README.md"
+repository = "https://github.com/dzhu/nutrimatic-rs"
+license = "MIT OR Apache-2.0"
+keywords = ["language", "trie"]
+categories = ["text-processing"]
+include = ["**/*.rs", "README.md"]
 
 [dependencies]
-byteorder = "*"
+byteorder = "1"
