@@ -21,11 +21,16 @@
 //! ```no_run
 //! use nutrimatic::Node;
 //!
-//! // Print out all nodes in the trie and their frequencies.
+//! // Print out all phrases in the trie in alphabetical order along with their
+//! // frequencies.
 //! fn dump(word: &mut String, node: &Node, depth: usize) {
-//!     for child in &node.children().unwrap() {
+//!     for child in &node.children() {
+//!         // The space indicates that this transition corresponds to a word
+//!         // boundary.
+//!         if child.ch() == ' ' as u8 {
+//!             println!("{}'{}' {:8}", "    ".repeat(depth), word, child.freq());
+//!         }
 //!         word.push(child.ch() as char);
-//!         println!("{}'{}' {:8}", "    ".repeat(depth), word, child.freq());
 //!         dump(word, &child, depth + 1);
 //!         word.pop();
 //!     }
@@ -34,8 +39,7 @@
 //! fn main() {
 //!     // Get a buffer containing an index file somehow.
 //!     let buf: &[u8] = todo!();
-//!     let trie = Node::new(buf);
-//!     dump(&mut String::new(), &trie, 0);
+//!     dump(&mut String::new(), &Node::new(buf), 0);
 //! }
 //! ```
 //!
@@ -84,13 +88,16 @@ impl<'buf, 'reader> Iterator for ChildIter<'buf, 'reader> {
 ///
 /// // Materialize all the children of a node into a `Vec`.
 /// fn collect_children<'a>(node: &Node<'a>) -> Vec<Node<'a>> {
-///     node.children().unwrap().iter().collect()
+///     node.children().iter().collect()
 /// }
 /// ```
 ///
 /// [`children`]: Node::children
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ChildReader<'buf> {
+pub struct ChildReader<'buf>(Option<ChildReaderInner<'buf>>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ChildReaderInner<'buf> {
     num: usize,
     buf: &'buf [u8],
     base: usize,
@@ -98,26 +105,16 @@ pub struct ChildReader<'buf> {
     read_fn: fn(&'buf [u8], usize, usize, u64) -> Node<'buf>,
 }
 
-impl<'buf> ChildReader<'buf> {
-    /// Returns the child at the given index, starting from 0. Children are in
-    /// increasing order by character. If the index is not within bounds, this
-    /// method will panic or return garbage.
-    pub fn index(&self, index: usize) -> Node<'buf> {
+impl<'buf> ChildReaderInner<'buf> {
+    fn index(&self, index: usize) -> Node<'buf> {
         (self.read_fn)(self.buf, self.base, index, self.freq)
     }
 
-    /// Returns the number of children of the node.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.num
     }
 
-    /// Returns `true` if the node has no children.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Finds a child with the given character using binary search.
-    pub fn find(&self, ch: u8) -> Option<Node<'buf>> {
+    fn find(&self, ch: u8) -> Option<Node<'buf>> {
         let mut a = 0;
         let mut b = self.len();
         while b > a {
@@ -138,10 +135,7 @@ impl<'buf> ChildReader<'buf> {
         None
     }
 
-    /// Finds a child with the given character by scanning through the children
-    /// in order. This is useful when the character is known to be early in the
-    /// list (in particular, the space character is always first if present).
-    pub fn scan(&self, ch: u8) -> Option<Node<'buf>> {
+    fn scan(&self, ch: u8) -> Option<Node<'buf>> {
         for i in 0..self.len() {
             let child = self.index(i);
             match child.ch.cmp(&ch) {
@@ -151,6 +145,42 @@ impl<'buf> ChildReader<'buf> {
             }
         }
         None
+    }
+}
+
+impl<'buf> ChildReader<'buf> {
+    /// Returns the child at the given index, starting from 0. Children are in
+    /// increasing order by character. If the index is not within bounds, this
+    /// method will panic or return garbage.
+    pub fn index(&self, index: usize) -> Node<'buf> {
+        // It is incorrect to call this method if this struct contains `None`
+        // (then `len() == 0`, so no index is valid), so unwrapping is okay.
+        self.0.unwrap().index(index)
+    }
+
+    /// Returns the number of children of the node.
+    pub fn len(&self) -> usize {
+        match self.0 {
+            None => 0,
+            Some(inner) => inner.len(),
+        }
+    }
+
+    /// Returns `true` if the node has no children.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Finds a child with the given character using binary search.
+    pub fn find(&self, ch: u8) -> Option<Node<'buf>> {
+        self.0.and_then(|inner| inner.find(ch))
+    }
+
+    /// Finds a child with the given character by scanning through the children
+    /// in order. This is useful when the character is known to be early in the
+    /// list (in particular, the space character is always first if present).
+    pub fn scan(&self, ch: u8) -> Option<Node<'buf>> {
+        self.0.and_then(|inner| inner.scan(ch))
     }
 
     /// Returns an iterator over the children.
@@ -171,6 +201,11 @@ impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
 }
 
 /// A node in a trie.
+///
+/// Nodes implement ordering primarily according to their frequency in order to
+/// accommodate using them in priority queues for best-first search.
+///
+/// # Examples
 ///
 /// ```
 /// use nutrimatic::Node;
@@ -235,27 +270,32 @@ impl<'buf> Node<'buf> {
     /// the corpus contains any phrase that starts with the sequence of
     /// characters corresponding to the path to this node (including this node's
     /// own character).
+    ///
+    /// This value is not useful for a root node returned by [`Node::new`].
     pub fn freq(&self) -> u64 {
         self.freq
     }
 
     /// Parses a node and returns an object representing the sequence of its
     /// children.
-    pub fn children(&self) -> Option<ChildReader<'buf>> {
+    pub fn children(&self) -> ChildReader<'buf> {
         let ind = match self.loc {
             Some(l) => l - 1,
-            None => return None,
+            // We could return a dummy object with length 0 here, which would
+            // simplify the code a bit, but it turns out that just constructing
+            // and moving that out results in a huge hit to overall performance.
+            None => return ChildReader(None),
         };
         let sig = self.buf[ind];
         let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, u64) -> Node) = match sig {
             0x20..=0x7f => {
-                return Some(ChildReader {
+                return ChildReader(Some(ChildReaderInner {
                     num: 1,
                     buf: self.buf,
                     base: ind,
                     freq: self.freq,
                     read_fn: node_types::read_00,
-                })
+                }))
             }
             0x00..=0x1f => (0x00, 2, node_types::read_10),
             0x80..=0x9f => (0x80, 3, node_types::read_11),
@@ -270,14 +310,14 @@ impl<'buf> Node<'buf> {
             _ => unreachable!(),
         };
 
-        Some(ChildReader {
+        ChildReader(Some(ChildReaderInner {
             num: num.into(),
             buf: self.buf,
             base: ind - elem_bytes * num as usize,
             // Not actually used in this case.
             freq: 0,
             read_fn: func,
-        })
+        }))
     }
 
     /// Searches multiple levels through the trie in one call.
@@ -286,7 +326,7 @@ impl<'buf> Node<'buf> {
         let mut children = self.children();
 
         for (i, &ch) in q.iter().enumerate() {
-            if let Some(child) = children.and_then(|c| c.find(ch)) {
+            if let Some(child) = children.find(ch) {
                 node = child;
                 children = child.children();
             } else {
@@ -295,7 +335,7 @@ impl<'buf> Node<'buf> {
         }
         SearchResult::Found {
             freq: node.freq,
-            children,
+            children: Some(children),
         }
     }
 
