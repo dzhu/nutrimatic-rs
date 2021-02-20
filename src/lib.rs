@@ -52,11 +52,15 @@ use std::cmp::Ordering;
 mod node_types;
 
 /// A link leading out of a node in the trie.
+///
+/// Links implement ordering primarily according to their frequency in order to
+/// facilitate best-first searching through a trie.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Link<'buf> {
-    ch: u8,
+    // `freq` needs to come first for the sake of the ordering.
     freq: u64,
 
+    ch: u8,
     buf: &'buf [u8],
     loc: Option<usize>,
 }
