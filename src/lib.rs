@@ -55,7 +55,7 @@ mod node_types;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Link<'buf> {
     ch: u8,
-    freq: usize,
+    freq: u64,
 
     buf: &'buf [u8],
     loc: Option<usize>,
@@ -83,7 +83,7 @@ impl<'buf> Link<'buf> {
     /// the corpus contains any phrase that starts with the sequence of
     /// characters corresponding to the path to this link (including this link's
     /// own character).
-    pub fn freq(&self) -> usize {
+    pub fn freq(&self) -> u64 {
         self.freq
     }
 }
@@ -133,8 +133,8 @@ pub struct LinkReader<'buf> {
     num: usize,
     buf: &'buf [u8],
     base: usize,
-    freq: usize,
-    read_fn: fn(&'buf [u8], usize, usize, usize) -> Link<'buf>,
+    freq: u64,
+    read_fn: fn(&'buf [u8], usize, usize, u64) -> Link<'buf>,
 }
 
 impl<'buf> LinkReader<'buf> {
@@ -232,7 +232,7 @@ impl<'buf, 'reader> IntoIterator for &'reader LinkReader<'buf> {
 pub struct Node<'buf> {
     buf: &'buf [u8],
     loc: usize,
-    freq: usize,
+    freq: u64,
 }
 
 /// The result of searching for a string.
@@ -249,7 +249,7 @@ pub enum SearchResult<'buf> {
     /// following links.
     Found {
         /// The frequency.
-        freq: usize,
+        freq: u64,
         /// The following links.
         links: Option<LinkReader<'buf>>,
     },
@@ -270,8 +270,7 @@ impl<'buf> Node<'buf> {
     pub fn links(self: &Self) -> LinkReader<'buf> {
         let ind = self.loc - 1;
         let sig = self.buf[ind];
-        let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, usize) -> Link) = match sig
-        {
+        let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, u64) -> Link) = match sig {
             0x20..=0x7f => {
                 return LinkReader {
                     num: 1,
@@ -342,7 +341,7 @@ impl<'buf> Node<'buf> {
     ///
     /// This function performs a query for the given characters followed by a
     /// space character and returns the frequency of the final link, if found.
-    pub fn word_freq(self: &Self, word: &[u8]) -> Option<usize> {
+    pub fn word_freq(self: &Self, word: &[u8]) -> Option<u64> {
         match self.search_string(word) {
             SearchResult::FailedOn(_) => None,
             SearchResult::Found { links, .. } => {
