@@ -23,12 +23,10 @@
 //!
 //! // Print out all nodes in the trie and their frequencies.
 //! fn dump(word: &mut String, node: &Node, depth: usize) {
-//!     for link in &node.links() {
-//!         word.push(link.ch() as char);
-//!         println!("{}'{}' {:8}", "    ".repeat(depth), word, link.freq());
-//!         if let Some(c) = link.child() {
-//!             dump(word, &c, depth + 1);
-//!         }
+//!     for child in &node.children().unwrap() {
+//!         word.push(child.ch() as char);
+//!         println!("{}'{}' {:8}", "    ".repeat(depth), word, child.freq());
+//!         dump(word, &child, depth + 1);
 //!         word.pop();
 //!     }
 //! }
@@ -51,48 +49,48 @@ use std::cmp::Ordering;
 
 mod node_types;
 
-/// An iterator over the links leading out of a node in the trie.
+/// An iterator over the children of a node.
 ///
-/// This `struct` is created by iterating over [`LinkReader`].
+/// This `struct` is created by iterating over [`ChildReader`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LinkIter<'buf, 'reader> {
-    links: &'reader LinkReader<'buf>,
+pub struct ChildIter<'buf, 'reader> {
+    reader: &'reader ChildReader<'buf>,
     ind: usize,
 }
 
-impl<'buf, 'reader> Iterator for LinkIter<'buf, 'reader> {
+impl<'buf, 'reader> Iterator for ChildIter<'buf, 'reader> {
     type Item = Node<'buf>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.ind < self.links.len() {
+        if self.ind < self.reader.len() {
             self.ind += 1;
-            Some(self.links.index(self.ind - 1))
+            Some(self.reader.index(self.ind - 1))
         } else {
             None
         }
     }
 }
 
-/// A lazy reader of the links leading out of a node in the trie.
+/// A lazy reader of the children of a node.
 ///
-/// This `struct` is created by the [`links`] method on [`Node`]. It
-/// conceptually represents a sequence of [`Link`]s indexed by contiguous
-/// numbers, kind of like `[Link]`; however, it does not physically contain any
+/// This `struct` is created by the [`children`] method on [`Node`]. It
+/// conceptually represents a sequence of [`Node`]s indexed by contiguous
+/// numbers, kind of like `[Node]`; however, it does not physically contain any
 /// instances, instead constructing them on demand.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// use nutrimatic::{Link, Node};
+/// use nutrimatic::Node;
 ///
-/// // Materialize all the links leading out of a node.
-/// fn collect_links<'a>(node: &Node<'a>) -> Vec<Link<'a>> {
-///     node.links().iter().collect()
+/// // Materialize all the children of a node into a `Vec`.
+/// fn collect_children<'a>(node: &Node<'a>) -> Vec<Node<'a>> {
+///     node.children().unwrap().iter().collect()
 /// }
 /// ```
 ///
-/// [`links`]: Node::links
+/// [`children`]: Node::children
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LinkReader<'buf> {
+pub struct ChildReader<'buf> {
     num: usize,
     buf: &'buf [u8],
     base: usize,
@@ -100,15 +98,15 @@ pub struct LinkReader<'buf> {
     read_fn: fn(&'buf [u8], usize, usize, u64) -> Node<'buf>,
 }
 
-impl<'buf> LinkReader<'buf> {
-    /// Returns the link at the given index, starting from 0. Links are in
+impl<'buf> ChildReader<'buf> {
+    /// Returns the child at the given index, starting from 0. Children are in
     /// increasing order by character. If the index is not within bounds, this
     /// method will panic or return garbage.
     pub fn index(&self, index: usize) -> Node<'buf> {
         (self.read_fn)(self.buf, self.base, index, self.freq)
     }
 
-    /// Returns the number of links in this sequence.
+    /// Returns the number of children of the node.
     pub fn len(&self) -> usize {
         self.num
     }
@@ -118,19 +116,19 @@ impl<'buf> LinkReader<'buf> {
         self.len() == 0
     }
 
-    /// Finds a link with the given character using binary search.
+    /// Finds a child with the given character using binary search.
     pub fn find(&self, ch: u8) -> Option<Node<'buf>> {
         let mut a = 0;
         let mut b = self.len();
         while b > a {
             let c = (a + b) / 2;
-            let link = self.index(c);
-            match link.ch.cmp(&ch) {
+            let child = self.index(c);
+            match child.ch.cmp(&ch) {
                 Ordering::Less => {
                     a = c + 1;
                 }
                 Ordering::Equal => {
-                    return Some(link);
+                    return Some(child);
                 }
                 Ordering::Greater => {
                     b = c;
@@ -140,55 +138,50 @@ impl<'buf> LinkReader<'buf> {
         None
     }
 
-    /// Finds a link with the given character by scanning through the links in
-    /// order. This is useful when the character is known to be early in the
+    /// Finds a child with the given character by scanning through the children
+    /// in order. This is useful when the character is known to be early in the
     /// list (in particular, the space character is always first if present).
     pub fn scan(&self, ch: u8) -> Option<Node<'buf>> {
         for i in 0..self.len() {
-            let link = self.index(i);
-            match link.ch.cmp(&ch) {
+            let child = self.index(i);
+            match child.ch.cmp(&ch) {
                 Ordering::Less => {}
-                Ordering::Equal => return Some(link),
+                Ordering::Equal => return Some(child),
                 Ordering::Greater => return None,
             }
         }
         None
     }
 
-    /// Returns an iterator over the links.
-    pub fn iter<'reader>(&'reader self) -> LinkIter<'buf, 'reader> {
+    /// Returns an iterator over the children.
+    pub fn iter<'reader>(&'reader self) -> ChildIter<'buf, 'reader> {
         self.into_iter()
     }
 }
 
-impl<'buf, 'reader> IntoIterator for &'reader LinkReader<'buf> {
+impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
     type Item = Node<'buf>;
-    type IntoIter = LinkIter<'buf, 'reader>;
-    fn into_iter(self) -> LinkIter<'buf, 'reader> {
-        LinkIter {
-            links: self,
+    type IntoIter = ChildIter<'buf, 'reader>;
+    fn into_iter(self) -> ChildIter<'buf, 'reader> {
+        ChildIter {
+            reader: self,
             ind: 0,
         }
     }
 }
 
-/// A node in the trie that is physically present in an index file.
-///
-/// The unit of serialization in an index file, and what we mean by "node", is a
-/// sequence of links to children. Therefore, leaf nodes in the conceptual trie
-/// are not physically present in the file and have no representation as
-/// `Node`s.
+/// A node in a trie.
 ///
 /// ```
 /// use nutrimatic::Node;
 ///
-/// // This buffer represents a single node with three links to leaf children.
+/// // This buffer represents a single node with three leaf children.
 /// let buf: &[u8] = &[0x61, 0x11, 0x62, 0x12, 0x63, 0x13, 0x03];
 ///
-/// let trie = Node::new(buf);
-/// // Print out all links from the root node of the trie.
-/// for link in &trie.links() {
-///     println!("{} {}", link.ch() as char, link.freq());
+/// let root = Node::new(buf);
+/// // Print out all children of the root node of the trie.
+/// for child in &root.children() {
+///     println!("{} {}", child.ch() as char, child.freq());
 /// }
 /// ```
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -206,16 +199,16 @@ pub struct Node<'buf> {
 ///
 /// [`search_string`]: Node::search_string
 pub enum SearchResult<'buf> {
-    /// Result indicating that no link was found after a certain number of
+    /// Result indicating that no child was found after a certain number of
     /// characters.
     FailedOn(usize),
     /// Result indicating that the string was found with the given frequency and
-    /// following links.
+    /// following children.
     Found {
         /// The frequency.
         freq: u64,
-        /// The following links.
-        links: Option<LinkReader<'buf>>,
+        /// The following children.
+        children: Option<ChildReader<'buf>>,
     },
 }
 
@@ -230,22 +223,25 @@ impl<'buf> Node<'buf> {
         }
     }
 
-    /// Returns the character associated with the link.
+    /// Returns the character associated with the node—i.e., the letter used to
+    /// transition from this node's parent to this node.
+    ///
+    /// This value is not useful for a root node returned by [`Node::new`].
     pub fn ch(&self) -> u8 {
         self.ch
     }
 
-    /// Returns the frequency of the link—i.e., the total number of times that
+    /// Returns the frequency of the node—i.e., the total number of times that
     /// the corpus contains any phrase that starts with the sequence of
-    /// characters corresponding to the path to this link (including this link's
+    /// characters corresponding to the path to this node (including this node's
     /// own character).
     pub fn freq(&self) -> u64 {
         self.freq
     }
 
-    /// Parses a node and returns an object representing the sequence of links
-    /// leading out from it.
-    pub fn children(&self) -> Option<LinkReader<'buf>> {
+    /// Parses a node and returns an object representing the sequence of its
+    /// children.
+    pub fn children(&self) -> Option<ChildReader<'buf>> {
         let ind = match self.loc {
             Some(l) => l - 1,
             None => return None,
@@ -253,7 +249,7 @@ impl<'buf> Node<'buf> {
         let sig = self.buf[ind];
         let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, u64) -> Node) = match sig {
             0x20..=0x7f => {
-                return Some(LinkReader {
+                return Some(ChildReader {
                     num: 1,
                     buf: self.buf,
                     base: ind,
@@ -274,7 +270,7 @@ impl<'buf> Node<'buf> {
             _ => unreachable!(),
         };
 
-        Some(LinkReader {
+        Some(ChildReader {
             num: num.into(),
             buf: self.buf,
             base: ind - elem_bytes * num as usize,
@@ -299,19 +295,19 @@ impl<'buf> Node<'buf> {
         }
         SearchResult::Found {
             freq: node.freq,
-            links: children,
+            children,
         }
     }
 
     /// Finds the frequency of the given sequence of characters in the trie.
     ///
     /// This function performs a query for the given characters followed by a
-    /// space character and returns the frequency of the final link, if found.
+    /// space character and returns the frequency of the final node, if found.
     pub fn word_freq(&self, word: &[u8]) -> Option<u64> {
         match self.search_string(word) {
             SearchResult::FailedOn(_) => None,
-            SearchResult::Found { links, .. } => {
-                links.and_then(|l| l.scan(' ' as u8)).map(|l| l.freq)
+            SearchResult::Found { children, .. } => {
+                children.and_then(|l| l.scan(' ' as u8)).map(|l| l.freq)
             }
         }
     }
