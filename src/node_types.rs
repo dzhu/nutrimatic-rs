@@ -5,8 +5,8 @@ pub(crate) fn read_00<'buf>(
     base: usize,
     _ind: usize,
     freq: u64,
-) -> crate::Link<'buf> {
-    crate::Link {
+) -> crate::Node<'buf> {
+    crate::Node {
         freq,
         ch: buf[base],
         buf,
@@ -19,8 +19,8 @@ pub(crate) fn read_10<'buf>(
     base: usize,
     ind: usize,
     _freq: u64,
-) -> crate::Link<'buf> {
-    crate::Link {
+) -> crate::Node<'buf> {
+    crate::Node {
         freq: buf[base + 2 * ind + 1] as u64,
         ch: buf[base + 2 * ind],
         buf,
@@ -33,9 +33,9 @@ pub(crate) fn read_11<'buf>(
     base: usize,
     ind: usize,
     _freq: u64,
-) -> crate::Link<'buf> {
+) -> crate::Node<'buf> {
     let ofs = buf[base + 3 * ind + 2];
-    crate::Link {
+    crate::Node {
         freq: buf[base + 3 * ind + 1] as u64,
         ch: buf[base + 3 * ind],
         buf,
@@ -52,9 +52,9 @@ pub(crate) fn read_12<'buf>(
     base: usize,
     ind: usize,
     _freq: u64,
-) -> crate::Link<'buf> {
+) -> crate::Node<'buf> {
     let ofs = LE::read_u16(&buf[base + 4 * ind + 2..]);
-    crate::Link {
+    crate::Node {
         freq: buf[base + 4 * ind + 1] as u64,
         ch: buf[base + 4 * ind],
         buf,
@@ -71,9 +71,9 @@ pub(crate) fn read_22<'buf>(
     base: usize,
     ind: usize,
     _freq: u64,
-) -> crate::Link<'buf> {
+) -> crate::Node<'buf> {
     let ofs = LE::read_u16(&buf[base + 5 * ind + 3..]);
-    crate::Link {
+    crate::Node {
         freq: LE::read_u16(&buf[base + 5 * ind + 1..]) as u64,
         ch: buf[base + 5 * ind],
         buf,
@@ -90,9 +90,9 @@ pub(crate) fn read_88<'buf>(
     base: usize,
     ind: usize,
     _freq: u64,
-) -> crate::Link<'buf> {
+) -> crate::Node<'buf> {
     let ofs = LE::read_u64(&buf[base + 17 * ind + 9..]);
-    crate::Link {
+    crate::Node {
         freq: LE::read_u64(&buf[base + 17 * ind + 1..]) as u64,
         ch: buf[base + 17 * ind],
         buf,

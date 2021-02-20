@@ -51,47 +51,6 @@ use std::cmp::Ordering;
 
 mod node_types;
 
-/// A link leading out of a node in the trie.
-///
-/// Links implement ordering primarily according to their frequency in order to
-/// facilitate best-first searching through a trie.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Link<'buf> {
-    // `freq` needs to come first for the sake of the ordering.
-    freq: u64,
-
-    ch: u8,
-    buf: &'buf [u8],
-    loc: Option<usize>,
-}
-
-impl<'buf> Link<'buf> {
-    /// Returns the child node pointed to by this link, if there is one. Leaf
-    /// nodes have a link notionally leading to them but are not physically
-    /// represented in the index file; they correspond to a return value of
-    /// `None`.
-    pub fn child(&self) -> Option<Node<'buf>> {
-        self.loc.map(|l| Node {
-            buf: self.buf,
-            loc: l,
-            freq: self.freq,
-        })
-    }
-
-    /// Returns the character associated with the link.
-    pub fn ch(&self) -> u8 {
-        self.ch
-    }
-
-    /// Returns the frequency of the link—i.e., the total number of times that
-    /// the corpus contains any phrase that starts with the sequence of
-    /// characters corresponding to the path to this link (including this link's
-    /// own character).
-    pub fn freq(&self) -> u64 {
-        self.freq
-    }
-}
-
 /// An iterator over the links leading out of a node in the trie.
 ///
 /// This `struct` is created by iterating over [`LinkReader`].
@@ -102,7 +61,7 @@ pub struct LinkIter<'buf, 'reader> {
 }
 
 impl<'buf, 'reader> Iterator for LinkIter<'buf, 'reader> {
-    type Item = Link<'buf>;
+    type Item = Node<'buf>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.ind < self.links.len() {
             self.ind += 1;
@@ -138,14 +97,14 @@ pub struct LinkReader<'buf> {
     buf: &'buf [u8],
     base: usize,
     freq: u64,
-    read_fn: fn(&'buf [u8], usize, usize, u64) -> Link<'buf>,
+    read_fn: fn(&'buf [u8], usize, usize, u64) -> Node<'buf>,
 }
 
 impl<'buf> LinkReader<'buf> {
     /// Returns the link at the given index, starting from 0. Links are in
     /// increasing order by character. If the index is not within bounds, this
     /// method will panic or return garbage.
-    pub fn index(&self, index: usize) -> Link<'buf> {
+    pub fn index(&self, index: usize) -> Node<'buf> {
         (self.read_fn)(self.buf, self.base, index, self.freq)
     }
 
@@ -160,7 +119,7 @@ impl<'buf> LinkReader<'buf> {
     }
 
     /// Finds a link with the given character using binary search.
-    pub fn find(&self, ch: u8) -> Option<Link<'buf>> {
+    pub fn find(&self, ch: u8) -> Option<Node<'buf>> {
         let mut a = 0;
         let mut b = self.len();
         while b > a {
@@ -184,7 +143,7 @@ impl<'buf> LinkReader<'buf> {
     /// Finds a link with the given character by scanning through the links in
     /// order. This is useful when the character is known to be early in the
     /// list (in particular, the space character is always first if present).
-    pub fn scan(&self, ch: u8) -> Option<Link<'buf>> {
+    pub fn scan(&self, ch: u8) -> Option<Node<'buf>> {
         for i in 0..self.len() {
             let link = self.index(i);
             match link.ch.cmp(&ch) {
@@ -203,7 +162,7 @@ impl<'buf> LinkReader<'buf> {
 }
 
 impl<'buf, 'reader> IntoIterator for &'reader LinkReader<'buf> {
-    type Item = Link<'buf>;
+    type Item = Node<'buf>;
     type IntoIter = LinkIter<'buf, 'reader>;
     fn into_iter(self) -> LinkIter<'buf, 'reader> {
         LinkIter {
@@ -234,9 +193,10 @@ impl<'buf, 'reader> IntoIterator for &'reader LinkReader<'buf> {
 /// ```
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Node<'buf> {
-    buf: &'buf [u8],
-    loc: usize,
     freq: u64,
+    ch: u8,
+    buf: &'buf [u8],
+    loc: Option<usize>,
 }
 
 /// The result of searching for a string.
@@ -263,26 +223,43 @@ impl<'buf> Node<'buf> {
     /// Constructs the root node of the trie serialized in the given buffer.
     pub fn new(buf: &'buf [u8]) -> Node<'buf> {
         Node {
-            buf,
-            loc: buf.len(),
             freq: 0,
+            ch: 0,
+            buf,
+            loc: Some(buf.len()),
         }
+    }
+
+    /// Returns the character associated with the link.
+    pub fn ch(&self) -> u8 {
+        self.ch
+    }
+
+    /// Returns the frequency of the link—i.e., the total number of times that
+    /// the corpus contains any phrase that starts with the sequence of
+    /// characters corresponding to the path to this link (including this link's
+    /// own character).
+    pub fn freq(&self) -> u64 {
+        self.freq
     }
 
     /// Parses a node and returns an object representing the sequence of links
     /// leading out from it.
-    pub fn links(self: &Self) -> LinkReader<'buf> {
-        let ind = self.loc - 1;
+    pub fn children(&self) -> Option<LinkReader<'buf>> {
+        let ind = match self.loc {
+            Some(l) => l - 1,
+            None => return None,
+        };
         let sig = self.buf[ind];
-        let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, u64) -> Link) = match sig {
+        let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, u64) -> Node) = match sig {
             0x20..=0x7f => {
-                return LinkReader {
+                return Some(LinkReader {
                     num: 1,
                     buf: self.buf,
                     base: ind,
                     freq: self.freq,
                     read_fn: node_types::read_00,
-                }
+                })
             }
             0x00..=0x1f => (0x00, 2, node_types::read_10),
             0x80..=0x9f => (0x80, 3, node_types::read_11),
@@ -297,47 +274,32 @@ impl<'buf> Node<'buf> {
             _ => unreachable!(),
         };
 
-        LinkReader {
+        Some(LinkReader {
             num: num.into(),
             buf: self.buf,
             base: ind - elem_bytes * num as usize,
             // Not actually used in this case.
             freq: 0,
             read_fn: func,
-        }
+        })
     }
 
     /// Searches multiple levels through the trie in one call.
-    pub fn search_string(self: &Self, q: &[u8]) -> SearchResult<'buf> {
+    pub fn search_string(&self, q: &[u8]) -> SearchResult<'buf> {
         let mut node = *self;
-        let mut links = self.links();
+        let mut children = self.children();
 
         for (i, &ch) in q.iter().enumerate() {
-            match links.find(ch) {
-                None => {
-                    return SearchResult::FailedOn(i);
-                }
-                Some(link) => match link.child() {
-                    None => {
-                        return if i == q.len() - 1 {
-                            SearchResult::Found {
-                                freq: link.freq,
-                                links: None,
-                            }
-                        } else {
-                            SearchResult::FailedOn(i + 1)
-                        };
-                    }
-                    Some(c) => {
-                        node = c;
-                        links = node.links();
-                    }
-                },
+            if let Some(child) = children.and_then(|c| c.find(ch)) {
+                node = child;
+                children = child.children();
+            } else {
+                return SearchResult::FailedOn(i);
             }
         }
         SearchResult::Found {
             freq: node.freq,
-            links: Some(links),
+            links: children,
         }
     }
 
@@ -345,7 +307,7 @@ impl<'buf> Node<'buf> {
     ///
     /// This function performs a query for the given characters followed by a
     /// space character and returns the frequency of the final link, if found.
-    pub fn word_freq(self: &Self, word: &[u8]) -> Option<u64> {
+    pub fn word_freq(&self, word: &[u8]) -> Option<u64> {
         match self.search_string(word) {
             SearchResult::FailedOn(_) => None,
             SearchResult::Found { links, .. } => {
