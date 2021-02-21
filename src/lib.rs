@@ -102,6 +102,7 @@ struct ChildReaderInner<'buf> {
     buf: &'buf [u8],
     base: usize,
     freq: u64,
+    elem_bytes: u8,
     read_fn: fn(&'buf [u8], usize, usize, u64) -> Node<'buf>,
 }
 
@@ -119,13 +120,13 @@ impl<'buf> ChildReaderInner<'buf> {
         let mut b = self.len();
         while b > a {
             let c = (a + b) / 2;
-            let child = self.index(c);
-            match child.ch.cmp(&ch) {
+            let child_ch = self.buf[self.base + c * self.elem_bytes as usize];
+            match child_ch.cmp(&ch) {
                 Ordering::Less => {
                     a = c + 1;
                 }
                 Ordering::Equal => {
-                    return Some(child);
+                    return Some(self.index(c));
                 }
                 Ordering::Greater => {
                     b = c;
@@ -137,10 +138,10 @@ impl<'buf> ChildReaderInner<'buf> {
 
     fn scan(&self, ch: u8) -> Option<Node<'buf>> {
         for i in 0..self.len() {
-            let child = self.index(i);
-            match child.ch.cmp(&ch) {
+            let child_ch = self.buf[self.base + i * self.elem_bytes as usize];
+            match child_ch.cmp(&ch) {
                 Ordering::Less => {}
-                Ordering::Equal => return Some(child),
+                Ordering::Equal => return Some(self.index(i)),
                 Ordering::Greater => return None,
             }
         }
@@ -294,6 +295,7 @@ impl<'buf> Node<'buf> {
                     buf: self.buf,
                     base: ind,
                     freq: self.freq,
+                    elem_bytes: 0,
                     read_fn: node_types::read_00,
                 }))
             }
@@ -316,6 +318,7 @@ impl<'buf> Node<'buf> {
             base: ind - elem_bytes * num as usize,
             // Not actually used in this case.
             freq: 0,
+            elem_bytes: elem_bytes as u8,
             read_fn: func,
         }))
     }
