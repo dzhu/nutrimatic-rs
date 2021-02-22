@@ -251,12 +251,14 @@ pub enum SearchResult<'buf> {
 impl<'buf> Node<'buf> {
     /// Constructs the root node of the trie serialized in the given buffer.
     pub fn new(buf: &'buf [u8]) -> Node<'buf> {
-        Node {
+        let mut node = Node {
             freq: 0,
             ch: 0,
             buf,
             loc: Some(buf.len()),
-        }
+        };
+        node.freq = node.children().iter().map(|c| c.freq()).sum();
+        node
     }
 
     /// Returns the character associated with the node—i.e., the letter used to
@@ -271,8 +273,6 @@ impl<'buf> Node<'buf> {
     /// the corpus contains any phrase that starts with the sequence of
     /// characters corresponding to the path to this node (including this node's
     /// own character).
-    ///
-    /// This value is not useful for a root node returned by [`Node::new`].
     pub fn freq(&self) -> u64 {
         self.freq
     }
