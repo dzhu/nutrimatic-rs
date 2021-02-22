@@ -203,8 +203,8 @@ impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
 
 /// A node in a trie.
 ///
-/// Nodes implement ordering primarily according to their frequency in order to
-/// accommodate using them in priority queues for best-first search.
+/// Nodes implement ordering and equality according to their frequency in order
+/// to accommodate using them in priority queues for best-first search.
 ///
 /// # Examples
 ///
@@ -220,12 +220,32 @@ impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
 ///     println!("{} {}", child.ch() as char, child.freq());
 /// }
 /// ```
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug)]
 pub struct Node<'buf> {
     freq: u64,
     ch: u8,
     buf: &'buf [u8],
     loc: Option<usize>,
+}
+
+impl Eq for Node<'_> {}
+
+impl Ord for Node<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.freq.cmp(&other.freq)
+    }
+}
+
+impl PartialEq for Node<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.freq == other.freq
+    }
+}
+
+impl PartialOrd for Node<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// The result of searching for a string.
