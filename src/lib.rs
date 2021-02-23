@@ -344,11 +344,14 @@ impl<'buf> Node<'buf> {
     }
 
     /// Searches multiple levels through the trie in one call.
-    pub fn search_string(&self, q: &[u8]) -> SearchResult<'buf> {
+    pub fn search_string<'a, I>(&self, q: I) -> SearchResult<'buf>
+    where
+        I: IntoIterator<Item = &'a u8>,
+    {
         let mut node = *self;
         let mut children = self.children();
 
-        for (i, &ch) in q.iter().enumerate() {
+        for (i, &ch) in q.into_iter().enumerate() {
             if let Some(child) = children.find(ch) {
                 node = child;
                 children = child.children();
@@ -366,11 +369,14 @@ impl<'buf> Node<'buf> {
     ///
     /// This function performs a query for the given characters followed by a
     /// space character and returns the frequency of the final node, if found.
-    pub fn word_freq(&self, word: &[u8]) -> Option<u64> {
+    pub fn word_freq<'a, I>(&self, word: I) -> Option<u64>
+    where
+        I: IntoIterator<Item = &'a u8>,
+    {
         match self.search_string(word) {
             SearchResult::FailedOn(_) => None,
             SearchResult::Found { children, .. } => {
-                children.and_then(|l| l.scan(' ' as u8)).map(|l| l.freq)
+                children.and_then(|l| l.scan(b' ')).map(|l| l.freq)
             }
         }
     }
