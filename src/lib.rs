@@ -18,28 +18,42 @@
 //!
 //! # Examples
 //!
-//! ```no_run
+//! ```
 //! use nutrimatic::Node;
 //!
-//! // Print out all phrases in the trie in alphabetical order along with their
+//! // Collect all phrases in the trie in alphabetical order along with their
 //! // frequencies.
-//! fn dump(word: &mut String, node: &Node, depth: usize) {
+//! fn collect(node: &Node, word: &mut String, out: &mut Vec<(String, u64)>) {
 //!     for child in &node.children() {
 //!         // The space indicates that this transition corresponds to a word
 //!         // boundary.
 //!         if child.ch() == ' ' as u8 {
-//!             println!("{}'{}' {:8}", "    ".repeat(depth), word, child.freq());
+//!             out.push((word.clone(), child.freq()));
 //!         }
 //!         word.push(child.ch() as char);
-//!         dump(word, &child, depth + 1);
+//!         collect(&child, word, out);
 //!         word.pop();
 //!     }
 //! }
 //!
 //! fn main() {
-//!     // Get a buffer containing an index file somehow.
-//!     let buf: &[u8] = todo!();
-//!     dump(&mut String::new(), &Node::new(buf), 0);
+//!     // This buffer describes a trie containing the words "ru" and "st"; a
+//!     // trie would normally be generated ahead of time by external tools. The
+//!     // byte values are written a bit oddly to hint at each one's purpose in
+//!     // the serialization.
+//!     let buf: &[u8] = &[
+//!         ' ' as u8, 17, 0x00 | 1,
+//!         'u' as u8, 17, 0, 0x80 | 1,
+//!         ' ' as u8, 18, 0x00 | 1,
+//!         't' as u8, 18, 0, 0x80 | 1,
+//!         'r' as u8, 17, 7, 's' as u8, 18, 0, 0x80 | 2,
+//!     ];
+//!
+//!     let root = Node::new(buf);
+//!
+//!     let mut words = vec![];
+//!     collect(&root, &mut String::new(), &mut words);
+//!     assert_eq!(words, vec![("ru".to_owned(), 17), ("st".to_owned(), 18)]);
 //! }
 //! ```
 //!
