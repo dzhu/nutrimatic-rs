@@ -215,6 +215,67 @@ impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
     }
 }
 
+/// A "thin" representation of a node in a trie.
+///
+/// `ThinNode` is like [`Node`], but smaller (it omits the reference to the
+/// buffer containing the trie). It is intended to be used when there are a lot
+/// of nodes in memory at the same time and reducing their size is helpful for
+/// performance. Using only `Node` allows for slightly simpler code and should
+/// be done when the difference in performance (if any) doesn't matter.
+///
+/// Thin nodes, like normal nodes, implement ordering and equality according to
+/// their frequency in order to accommodate using them in priority queues for
+/// best-first search.
+///
+/// Thin nodes are created by [`Node::to_thin`] and turned into normal nodes by
+/// [`Node::from_thin`].
+
+#[derive(Clone, Copy, Debug)]
+pub struct ThinNode<'buf> {
+    freq: u64,
+    loc: Option<usize>,
+    ch: u8,
+    _phantom: std::marker::PhantomData<&'buf [u8]>,
+}
+
+impl Eq for ThinNode<'_> {}
+
+impl Ord for ThinNode<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.freq.cmp(&other.freq)
+    }
+}
+
+impl PartialEq for ThinNode<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.freq == other.freq
+    }
+}
+
+impl PartialOrd for ThinNode<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'buf> ThinNode<'buf> {
+    /// Returns the character associated with the node—i.e., the letter used to
+    /// transition from this node's parent to this node.
+    ///
+    /// This value is not useful for a root node returned by [`Node::new`].
+    pub fn ch(&self) -> u8 {
+        self.ch
+    }
+
+    /// Returns the frequency of the node—i.e., the total number of times that
+    /// the corpus contains any phrase that starts with the sequence of
+    /// characters corresponding to the path to this node (including this node's
+    /// own character).
+    pub fn freq(&self) -> u64 {
+        self.freq
+    }
+}
+
 /// A node in a trie.
 ///
 /// Nodes implement ordering and equality according to their frequency in order
@@ -351,6 +412,29 @@ impl<'buf> Node<'buf> {
             elem_bytes: elem_bytes as u8,
             read_fn: func,
         }))
+    }
+
+    /// Constructs a thin version of this node.
+    pub fn to_thin(&self) -> ThinNode<'buf> {
+        ThinNode {
+            freq: self.freq,
+            loc: self.loc,
+            ch: self.ch,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Reconstitutes a thin node into a full node.
+    ///
+    /// The thin node must have originally been associated with the same index
+    /// file buffer as this node.
+    pub fn from_thin(&self, thin: ThinNode<'buf>) -> Node<'buf> {
+        Node {
+            freq: thin.freq,
+            loc: thin.loc,
+            ch: thin.ch,
+            buf: self.buf,
+        }
     }
 
     /// Searches multiple levels through the trie in one call.
