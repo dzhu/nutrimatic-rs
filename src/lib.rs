@@ -262,24 +262,20 @@ impl PartialOrd for Node<'_> {
     }
 }
 
-/// The result of searching for a string.
+/// The result of searching for a sequence of characters.
 ///
 /// This `struct` is created by the [`search_string`] method on [`Node`]. See
 /// its documentation for more.
 ///
 /// [`search_string`]: Node::search_string
 pub enum SearchResult<'buf> {
-    /// Result indicating that no child was found after a certain number of
-    /// characters.
+    /// Result indicating that the search stopped before reaching the end (i.e.,
+    /// `FailedOn(n)` means that there was no edge in the trie for the character
+    /// at index `n`).
     FailedOn(usize),
-    /// Result indicating that the string was found with the given frequency and
-    /// following children.
-    Found {
-        /// The frequency.
-        freq: u64,
-        /// The following children.
-        children: Option<ChildReader<'buf>>,
-    },
+    /// Result indicating that traversing the trie through the given characters
+    /// led to the included node.
+    Found(Node<'buf>),
 }
 
 impl<'buf> Node<'buf> {
@@ -363,20 +359,15 @@ impl<'buf> Node<'buf> {
         I: IntoIterator<Item = &'a u8>,
     {
         let mut node = *self;
-        let mut children = self.children();
 
         for (i, &ch) in q.into_iter().enumerate() {
-            if let Some(child) = children.find(ch) {
+            if let Some(child) = node.children().find(ch) {
                 node = child;
-                children = child.children();
             } else {
                 return SearchResult::FailedOn(i);
             }
         }
-        SearchResult::Found {
-            freq: node.freq,
-            children: Some(children),
-        }
+        SearchResult::Found(node)
     }
 
     /// Finds the frequency of the given sequence of characters in the trie.
@@ -389,9 +380,7 @@ impl<'buf> Node<'buf> {
     {
         match self.search_string(word) {
             SearchResult::FailedOn(_) => None,
-            SearchResult::Found { children, .. } => {
-                children.and_then(|l| l.scan(b' ')).map(|l| l.freq)
-            }
+            SearchResult::Found(node) => node.children().scan(b' ').map(|l| l.freq),
         }
     }
 }
