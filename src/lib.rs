@@ -215,6 +215,22 @@ impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
     }
 }
 
+/// The result of searching for a sequence of characters.
+///
+/// This `struct` is created by the [`search_string`] method on [`Node`]. See
+/// its documentation for more.
+///
+/// [`search_string`]: Node::search_string
+pub enum SearchResult<'buf> {
+    /// Result indicating that the search stopped before reaching the end (i.e.,
+    /// `FailedOn(n)` means that there was no edge in the trie for the character
+    /// at index `n`).
+    FailedOn(usize),
+    /// Result indicating that traversing the trie through the given characters
+    /// led to the included node.
+    Found(Node<'buf>),
+}
+
 /// A "thin" representation of a node in a trie.
 ///
 /// `ThinNode` is like [`Node`], but smaller (it omits the reference to the
@@ -321,22 +337,6 @@ impl PartialOrd for Node<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
-}
-
-/// The result of searching for a sequence of characters.
-///
-/// This `struct` is created by the [`search_string`] method on [`Node`]. See
-/// its documentation for more.
-///
-/// [`search_string`]: Node::search_string
-pub enum SearchResult<'buf> {
-    /// Result indicating that the search stopped before reaching the end (i.e.,
-    /// `FailedOn(n)` means that there was no edge in the trie for the character
-    /// at index `n`).
-    FailedOn(usize),
-    /// Result indicating that traversing the trie through the given characters
-    /// led to the included node.
-    Found(Node<'buf>),
 }
 
 impl<'buf> Node<'buf> {
