@@ -10,7 +10,7 @@ pub(crate) fn read_00<'buf>(
         freq,
         ch: buf[base],
         buf,
-        loc: Some(base),
+        loc: base,
     }
 }
 
@@ -24,7 +24,7 @@ pub(crate) fn read_10<'buf>(
         freq: buf[base + 2 * ind + 1] as u64,
         ch: buf[base + 2 * ind],
         buf,
-        loc: None,
+        loc: usize::MAX,
     }
 }
 
@@ -40,9 +40,9 @@ pub(crate) fn read_11<'buf>(
         ch: buf[base + 3 * ind],
         buf,
         loc: if ofs == u8::MAX {
-            None
+            usize::MAX
         } else {
-            Some(base - ofs as usize)
+            base - ofs as usize
         },
     }
 }
@@ -59,9 +59,9 @@ pub(crate) fn read_12<'buf>(
         ch: buf[base + 4 * ind],
         buf,
         loc: if ofs == u16::MAX {
-            None
+            usize::MAX
         } else {
-            Some(base - ofs as usize)
+            base - ofs as usize
         },
     }
 }
@@ -78,9 +78,9 @@ pub(crate) fn read_22<'buf>(
         ch: buf[base + 5 * ind],
         buf,
         loc: if ofs == u16::MAX {
-            None
+            usize::MAX
         } else {
-            Some(base - ofs as usize)
+            base - ofs as usize
         },
     }
 }
@@ -97,9 +97,9 @@ pub(crate) fn read_88<'buf>(
         ch: buf[base + 17 * ind],
         buf,
         loc: if ofs == u64::MAX {
-            None
+            usize::MAX
         } else {
-            Some(base - ofs as usize)
+            base - ofs as usize
         },
     }
 }

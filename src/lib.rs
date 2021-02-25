@@ -233,7 +233,7 @@ impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
 #[derive(Clone, Copy, Debug)]
 pub struct ThinNode<'buf> {
     freq: u64,
-    loc: Option<usize>,
+    loc: usize,
     ch: u8,
     _phantom: std::marker::PhantomData<&'buf [u8]>,
 }
@@ -300,7 +300,7 @@ pub struct Node<'buf> {
     freq: u64,
     ch: u8,
     buf: &'buf [u8],
-    loc: Option<usize>,
+    loc: usize,
 }
 
 impl Eq for Node<'_> {}
@@ -346,7 +346,7 @@ impl<'buf> Node<'buf> {
             freq: 0,
             ch: 0,
             buf,
-            loc: Some(buf.len()),
+            loc: buf.len(),
         };
         node.freq = node.children().iter().map(|c| c.freq()).sum();
         node
@@ -371,12 +371,13 @@ impl<'buf> Node<'buf> {
     /// Parses a node and returns an object representing the sequence of its
     /// children.
     pub fn children(&self) -> ChildReader<'buf> {
-        let ind = match self.loc {
-            Some(l) => l - 1,
+        let ind = if self.loc != usize::MAX {
+            self.loc - 1
+        } else {
             // We could return a dummy object with length 0 here, which would
             // simplify the code a bit, but it turns out that just constructing
             // and moving that out results in a huge hit to overall performance.
-            None => return ChildReader(None),
+            return ChildReader(None);
         };
         let sig = self.buf[ind];
         let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, u64) -> Node) = match sig {
