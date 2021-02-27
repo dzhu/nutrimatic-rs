@@ -1,7 +1,11 @@
 use byteorder::{ByteOrder, LE};
 
-pub(crate) fn read_00(buf: &[u8], base: usize, _ind: usize, freq: u64) -> crate::Node {
-    crate::Node {
+use crate::Node;
+
+pub(crate) type ReaderFn<'buf> = fn(&'buf [u8], usize, usize, u64) -> Node<'buf>;
+
+pub(crate) fn read_00(buf: &[u8], base: usize, _ind: usize, freq: u64) -> Node {
+    Node {
         freq,
         ch: buf[base],
         buf,
@@ -9,8 +13,8 @@ pub(crate) fn read_00(buf: &[u8], base: usize, _ind: usize, freq: u64) -> crate:
     }
 }
 
-pub(crate) fn read_10(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate::Node {
-    crate::Node {
+pub(crate) fn read_10(buf: &[u8], base: usize, ind: usize, _freq: u64) -> Node {
+    Node {
         freq: buf[base + 2 * ind + 1] as u64,
         ch: buf[base + 2 * ind],
         buf,
@@ -18,9 +22,9 @@ pub(crate) fn read_10(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate:
     }
 }
 
-pub(crate) fn read_11(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate::Node {
+pub(crate) fn read_11(buf: &[u8], base: usize, ind: usize, _freq: u64) -> Node {
     let ofs = buf[base + 3 * ind + 2];
-    crate::Node {
+    Node {
         freq: buf[base + 3 * ind + 1] as u64,
         ch: buf[base + 3 * ind],
         buf,
@@ -32,9 +36,9 @@ pub(crate) fn read_11(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate:
     }
 }
 
-pub(crate) fn read_12(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate::Node {
+pub(crate) fn read_12(buf: &[u8], base: usize, ind: usize, _freq: u64) -> Node {
     let ofs = LE::read_u16(&buf[base + 4 * ind + 2..]);
-    crate::Node {
+    Node {
         freq: buf[base + 4 * ind + 1] as u64,
         ch: buf[base + 4 * ind],
         buf,
@@ -46,9 +50,9 @@ pub(crate) fn read_12(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate:
     }
 }
 
-pub(crate) fn read_22(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate::Node {
+pub(crate) fn read_22(buf: &[u8], base: usize, ind: usize, _freq: u64) -> Node {
     let ofs = LE::read_u16(&buf[base + 5 * ind + 3..]);
-    crate::Node {
+    Node {
         freq: LE::read_u16(&buf[base + 5 * ind + 1..]) as u64,
         ch: buf[base + 5 * ind],
         buf,
@@ -60,9 +64,9 @@ pub(crate) fn read_22(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate:
     }
 }
 
-pub(crate) fn read_88(buf: &[u8], base: usize, ind: usize, _freq: u64) -> crate::Node {
+pub(crate) fn read_88(buf: &[u8], base: usize, ind: usize, _freq: u64) -> Node {
     let ofs = LE::read_u64(&buf[base + 17 * ind + 9..]);
-    crate::Node {
+    Node {
         freq: LE::read_u64(&buf[base + 17 * ind + 1..]) as u64,
         ch: buf[base + 17 * ind],
         buf,

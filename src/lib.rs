@@ -117,7 +117,7 @@ struct ChildReaderInner<'buf> {
     base: usize,
     freq: u64,
     elem_bytes: u8,
-    read_fn: fn(&'buf [u8], usize, usize, u64) -> Node<'buf>,
+    read_fn: node_types::ReaderFn<'buf>,
 }
 
 impl<'buf> ChildReaderInner<'buf> {
@@ -380,7 +380,7 @@ impl<'buf> Node<'buf> {
             return ChildReader(None);
         };
         let sig = self.buf[ind];
-        let (sig_base, elem_bytes, func): (_, _, fn(&[u8], usize, usize, u64) -> Node) = match sig {
+        let (sig_base, elem_bytes, func): (_, _, node_types::ReaderFn) = match sig {
             0x20..=0x7f => {
                 return ChildReader(Some(ChildReaderInner {
                     num: 1,
