@@ -221,6 +221,7 @@ impl<'buf, 'reader> IntoIterator for &'reader ChildReader<'buf> {
 /// its documentation for more.
 ///
 /// [`search_string`]: Node::search_string
+#[derive(Clone, Copy, Debug)]
 pub enum SearchResult<'buf> {
     /// Result indicating that the search stopped before reaching the end (i.e.,
     /// `FailedOn(n)` means that there was no edge in the trie for the character
