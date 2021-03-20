@@ -249,9 +249,8 @@ pub enum SearchResult<'buf> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ThinNode<'buf> {
-    freq: u64,
+    freq_ch: u64,
     loc: usize,
-    ch: u8,
     _phantom: std::marker::PhantomData<&'buf [u8]>,
 }
 
@@ -259,13 +258,13 @@ impl Eq for ThinNode<'_> {}
 
 impl Ord for ThinNode<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.freq.cmp(&other.freq)
+        self.freq_ch.cmp(&other.freq_ch)
     }
 }
 
 impl PartialEq for ThinNode<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.freq == other.freq
+        self.freq_ch == other.freq_ch
     }
 }
 
@@ -281,7 +280,7 @@ impl<'buf> ThinNode<'buf> {
     ///
     /// This value is not useful for a root node returned by [`Node::new`].
     pub fn ch(&self) -> u8 {
-        self.ch
+        self.freq_ch as u8
     }
 
     /// Returns the frequency of the node—i.e., the total number of times that
@@ -289,7 +288,7 @@ impl<'buf> ThinNode<'buf> {
     /// characters corresponding to the path to this node (including this node's
     /// own character).
     pub fn freq(&self) -> u64 {
-        self.freq
+        self.freq_ch >> 8
     }
 }
 
@@ -419,9 +418,8 @@ impl<'buf> Node<'buf> {
     /// Constructs a thin version of this node.
     pub fn to_thin(&self) -> ThinNode<'buf> {
         ThinNode {
-            freq: self.freq,
+            freq_ch: self.freq() << 8 | self.ch() as u64,
             loc: self.loc,
-            ch: self.ch,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -432,9 +430,9 @@ impl<'buf> Node<'buf> {
     /// file buffer as this node.
     pub fn from_thin(&self, thin: ThinNode<'buf>) -> Node<'buf> {
         Node {
-            freq: thin.freq,
+            freq: thin.freq(),
             loc: thin.loc,
-            ch: thin.ch,
+            ch: thin.ch(),
             buf: self.buf,
         }
     }
