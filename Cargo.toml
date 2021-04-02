@@ -1,6 +1,6 @@
 [package]
 name = "nutrimatic"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["dzhu"]
 edition = "2018"
 description = "Tools for reading Nutrimatic (https://nutrimatic.org) index files"
